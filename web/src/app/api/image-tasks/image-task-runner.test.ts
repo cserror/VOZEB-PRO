@@ -32,6 +32,15 @@ describe("writeImageGenerationLog", () => {
 
         expect(mocks.record.mock.calls[0][0].assets[0]).toMatchObject({ width: 64, height: 64, bytes: 128, mimeType: "image/png" });
     });
+
+    it("reuses a prepared server asset instead of persisting its remote source again", async () => {
+        const serverUrl = "/api/generation-log-assets/prepared.png";
+        const remoteUrl = "https://provider.example/result.png";
+
+        await writeImageGenerationLog(imageTask(), "success", [{ dataUrl: serverUrl, serverUrl, remoteUrl, mimeType: "image/png" }], 10);
+
+        expect(mocks.record.mock.calls[0][0].assets[0]).toMatchObject({ url: serverUrl, serverUrl, remoteUrl });
+    });
 });
 
 function imageTask(config: Partial<ImageTask["config"]> = {}): ImageTask {

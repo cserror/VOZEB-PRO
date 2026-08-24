@@ -1,4 +1,5 @@
 import { generationModelId } from "@/lib/server/generation-channel";
+import { normalizeServerAssetUrl } from "@/lib/server/generation-log-repository";
 import { recordGenerationTaskLogResult } from "@/lib/server/generation-log-task-service";
 import type { ImageTask } from "@/lib/server/image-task-store";
 
@@ -8,22 +9,20 @@ export function stableMediaUrl(value?: string) {
     return value && !value.startsWith("data:") && !value.startsWith("blob:") ? value : "";
 }
 
-export async function writeImageGenerationLog(
-    task: ImageTask,
-    status: "success" | "failed",
-    result: Array<{ dataUrl?: string; remoteUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string }> | { dataUrl?: string; remoteUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string } | string,
-    durationMs: number,
-    error?: string,
-) {
+type ImageGenerationLogResult = { dataUrl?: string; remoteUrl?: string; serverUrl?: string; width?: number; height?: number; bytes?: number; mimeType?: string };
+
+export async function writeImageGenerationLog(task: ImageTask, status: "success" | "failed", result: ImageGenerationLogResult[] | ImageGenerationLogResult | string, durationMs: number, error?: string) {
     const results = Array.isArray(result) ? result : [result];
     const targetSize = task.config.outputMode === "layers" ? undefined : resolveResultSize(task.config.quality, task.config.size || "auto");
     const assets = results.flatMap((item) => {
-        const resultUrl = typeof item === "string" ? item : item.remoteUrl || item.dataUrl || "";
+        const serverUrl = typeof item === "string" ? "" : normalizeServerAssetUrl(item.serverUrl || item.dataUrl);
+        const resultUrl = typeof item === "string" ? item : serverUrl || item.remoteUrl || item.dataUrl || "";
         return resultUrl
             ? [
                   {
                       type: "image" as const,
                       url: resultUrl,
+                      serverUrl: serverUrl || undefined,
                       remoteUrl: typeof item === "string" ? undefined : item.remoteUrl,
                       ...(typeof item === "string"
                           ? {}
