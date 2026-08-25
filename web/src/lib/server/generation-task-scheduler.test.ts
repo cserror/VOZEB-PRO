@@ -22,7 +22,7 @@ vi.mock("@/lib/server/generation-task-store", () => ({
     }),
 }));
 
-import { claimDueGenerationTasks, generationTaskNextPollAt, getNextGenerationTaskDueAt, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask } from "./generation-task-scheduler";
+import { claimDueGenerationTasks, generationTaskNextPollAt, generationVisualTaskNextPollAt, getNextGenerationTaskDueAt, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, wakeAgentGenerationTask } from "./generation-task-scheduler";
 
 describe("generation task scheduler", () => {
     beforeEach(() => {
@@ -122,10 +122,30 @@ describe("generation task scheduler", () => {
 
     it("uses adaptive polling and bounded network-error backoff", () => {
         expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 10_000 })).toBe(15_000);
-        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 60_000 })).toBe(70_000);
-        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 180_000 })).toBe(205_000);
+        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 30_999 })).toBe(35_999);
+        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 31_000 })).toBe(41_000);
+        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 120_999 })).toBe(130_999);
+        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 121_000 })).toBe(146_000);
         expect(generationTaskNextPollAt({ now: 1_000, consecutiveErrors: 1 })).toBe(11_000);
         expect(generationTaskNextPollAt({ now: 1_000, consecutiveErrors: 99 })).toBe(61_000);
+    });
+
+    it("delays only opted-in image and video polling until 30 seconds after submission", () => {
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 10_000 })).toBe(31_000);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 30_999 })).toBe(31_000);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 31_000 })).toBe(36_000);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 60_999 })).toBe(65_999);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 61_000 })).toBe(71_000);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 120_999 })).toBe(130_999);
+        expect(generationVisualTaskNextPollAt({ submittedAt: 1_000, now: 121_000 })).toBe(146_000);
+        expect(generationTaskNextPollAt({ submittedAt: 1_000, now: 10_000 })).toBe(15_000);
+    });
+
+    it("wakes only an active parent Agent without changing its execution phase", async () => {
+        mocks.records = [{ ...record("agent-one", 20_000), type: "agent", status: "running", executionPhase: "polling" }, { ...record("agent-completed", 20_000), type: "agent", status: "success", executionPhase: "completed" }];
+
+        await expect(wakeAgentGenerationTask("agent-one", 5_000)).resolves.toMatchObject({ id: "agent-one", nextPollAt: 5_000, executionPhase: "polling" });
+        await expect(wakeAgentGenerationTask("agent-completed", 5_000)).resolves.toBeNull();
     });
 });
 

@@ -505,12 +505,13 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
 export function normalizeGenerationLogRequestSnapshot(value: unknown): GenerationLogRequestSnapshot | undefined {
     const source = jsonObject(value);
     if (!source || Number(source.version) !== 1) return undefined;
+    const runId = normalizeOptionalText(source.runId, undefined, 160);
     const userPrompt = normalizeOptionalText(source.userPrompt, undefined, 4000);
     const parameters = normalizeSnapshotParameters(source.parameters);
     const references = Array.isArray(source.references) ? source.references.flatMap(normalizeSnapshotReference) : [];
     const slots = Array.isArray(source.slots) ? source.slots.flatMap(normalizeSnapshotSlot) : [];
-    if (!userPrompt && !Object.keys(parameters).length && !references.length && !slots.length) return undefined;
-    return { version: 1, ...(userPrompt ? { userPrompt } : {}), parameters, references, slots };
+    if (!runId && !userPrompt && !Object.keys(parameters).length && !references.length && !slots.length) return undefined;
+    return { version: 1, ...(runId ? { runId } : {}), ...(userPrompt ? { userPrompt } : {}), parameters, references, slots };
 }
 
 function normalizeSnapshotParameters(value: unknown): GenerationLogSnapshotParameters {

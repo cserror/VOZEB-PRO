@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import type { SystemGenerationChannelConfig } from "@/lib/server/generation-channel";
 import type { GenerationAttempt } from "@/lib/server/generation-attempt";
+import type { GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
 
 export type VideoTaskStatus = "running" | "success" | "error" | "cancelled";
@@ -19,6 +20,7 @@ export type VideoTask = GenerationTaskContext & {
     config: SystemGenerationChannelConfig;
     upstream: { id: string; provider: "openai" | "seedance" | "generation"; model: string; pollPath?: string; queryPath?: string; resultUrl?: string; pointsCost?: number; pointsUnits?: number; pointsRecordId?: string; refunded?: boolean };
     requestedDurationSeconds?: number;
+    generationLogParameters?: GenerationLogSnapshotParameters;
     source?: string;
     prompt?: string;
     attempts?: GenerationAttempt[];
@@ -61,7 +63,7 @@ export function transitionVideoTask(
     return transitionStoredGenerationTask<VideoTask>("video", task.id, task.userId, ["running"], patch, GENERATION_TASK_RETENTION_MS, executionPatch);
 }
 
-export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "attempts" | "result">>) {
+export function updateVideoTask(id: string, patch: Partial<Pick<VideoTask, "config" | "upstream" | "requestedDurationSeconds" | "generationLogParameters" | "attempts" | "result">>) {
     return mutateStoredGenerationTask<VideoTask>("video", id, GENERATION_TASK_RETENTION_MS, (task) => ({ ...task, ...patch }));
 }
 

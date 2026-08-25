@@ -10,7 +10,7 @@ import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/ge
 import { generationModelId } from "@/lib/server/generation-channel";
 import { refundImageTask } from "@/lib/server/image-task-refund";
 import { deletePreparedImageTaskResults, persistedImageTaskResults, prepareImageTaskResults } from "@/lib/server/image-task-result-service";
-import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { generationVisualTaskNextPollAt, scheduleGenerationTask, wakeAgentGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask, type StoredImageTaskMediaResult } from "@/lib/server/image-task-store";
 import { maintenanceWorkerContext } from "@/lib/server/maintenance-auth";
@@ -166,6 +166,7 @@ export async function markImageTaskFailed(task: ImageTask, error: string) {
     await updateImageTask(current.id, { attempts, candidateConfigs: [], attemptNo: attempts.at(-1)?.attemptNo });
     const refunded = await refundImageTask(failed);
     await writeImageGenerationLog({ ...refunded, retryable: true }, "failed", "", Date.now() - current.createdAt, error).catch((logError) => console.error("Image generation failure log write failed", logError));
+    await wakeAgentGenerationTask(refunded.runId).catch((wakeError) => console.error("Parent Agent wakeup failed after image failure", wakeError));
     return refunded;
 }
 
@@ -198,7 +199,7 @@ async function handleImageProviderResult(task: ImageTask, result: ImageTaskRunRe
             provider: task.config.advancedConfig?.protocol || task.config.apiFormat,
             queryPath: result.pending.explicitPollUrl || task.config.advancedConfig?.queryPath,
             submittedAt,
-            nextPollAt: submittedAt,
+            nextPollAt: generationVisualTaskNextPollAt({ submittedAt, now: submittedAt }),
             lastUpstreamStatus: "submitted",
         });
         return { state: "pending", upstream: result.pending, status: "submitted" };
@@ -309,6 +310,7 @@ async function completeImageResult(task: ImageTask, safeResults: StoredImageTask
             title: finalized.title || finalized.prompt.slice(0, 80),
             assets,
         }).catch((error) => console.error("Creative image asset registration failed", error));
+    await wakeAgentGenerationTask(finalized.runId).catch((wakeError) => console.error("Parent Agent wakeup failed after image completion", wakeError));
     return finalized;
 }
 

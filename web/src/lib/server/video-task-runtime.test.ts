@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     touch: vi.fn(),
     update: vi.fn(),
     writeLog: vi.fn(),
+    wakeAgent: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/store", () => ({ refundUserPoints: mocks.refund }));
@@ -28,6 +29,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
     touchVideoTask: mocks.touch,
     updateVideoTask: mocks.update,
 }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ wakeAgentGenerationTask: mocks.wakeAgent }));
 vi.mock("@/lib/server/generation-media-authorization", () => ({ generationMediaProxyHeaders: vi.fn(() => ({ "x-media-auth": "signed" })) }));
 
 import { queryVideoTaskUpstream, refreshVideoTaskFromUpstream } from "./video-task-runtime";
@@ -41,6 +43,7 @@ describe("video task upstream reconciliation", () => {
         mocks.register.mockResolvedValue(undefined);
         mocks.update.mockResolvedValue(undefined);
         mocks.writeLog.mockResolvedValue({});
+        mocks.wakeAgent.mockResolvedValue(null);
     });
 
     afterEach(() => {
@@ -63,7 +66,7 @@ describe("video task upstream reconciliation", () => {
     });
 
     it("recovers a locally timed-out task after the provider later returns a video", async () => {
-        const task = videoTask({ status: "error", error: "视频任务长时间未更新，请重新查询或生成。" });
+        const task = videoTask({ status: "error", error: "视频任务长时间未更新，请重新查询或生成。", runId: "agent-one" });
         const completed = { ...task, status: "success", result: { url: "/api/reference-assets/result.mp4", mimeType: "video/mp4", durationMs: 5_000 } };
         mocks.claim.mockResolvedValue(task);
         mocks.get.mockResolvedValue(task);
@@ -76,6 +79,7 @@ describe("video task upstream reconciliation", () => {
         expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: expect.stringContaining("/_media?url="), requestedDurationSeconds: 5 }));
         expect(mocks.complete).toHaveBeenCalledWith(task.id, expect.objectContaining({ url: "/api/reference-assets/result.mp4" }));
         expect(mocks.register).toHaveBeenCalledOnce();
+        expect(mocks.wakeAgent).toHaveBeenCalledWith("agent-one");
         expect(mocks.refund).not.toHaveBeenCalled();
     });
 

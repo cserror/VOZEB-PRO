@@ -144,6 +144,13 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 Canvas 使用 `GET/POST/DELETE /api/canvas/projects` 与 `PATCH /api/canvas/projects/{id}`；素材库使用 `GET/POST /api/library-assets` 与 `PATCH/DELETE /api/library-assets/{id}`。两组接口均按当前登录用户隔离，响应采用 `{ code, data, msg }`。
 
+生成记录使用 `/api/generation-history`，要求登录并只处理当前用户数据，响应采用 `{ code, data, msg }`：
+
+- `GET`：按单个图片或视频结果分页，不按整条生成日志分页；固定每页最多 24 条，接受 `page`、`kind=image|video`、`status=pending|success|failed`、`keyword`、`start` 和 `end`。`data` 为 `{ items, total, page, pageSize }`。
+- 每个 item 使用稳定结果 ID，包含记录/槽身份、类型、来源、状态、标题、可公开原提示词、可选优化提示词、模型、参数、可选积分、会话/项目关联、继续修改地址、媒体、错误、耗时、生成时间和 `addedToLibrary`。旧入口没有保存的字段保持缺失，不得用内部执行提示词补齐。
+- `POST`：提交 `{ action: "add-to-library", resultId }`，只允许已完成且有站内稳定媒体的结果；使用确定性素材 ID 和原 `storageKey`，重复提交返回同一素材，不复制物理文件。
+- `DELETE`：提交 `{ resultIds: string[] }`，最多处理当前页 24 个稳定结果 ID；生成中结果返回 `409`。删除单个结果不会误删同一生成中的其他结果，物理媒体继续执行素材、会话、Canvas、短剧、生成任务和作品引用保护。
+
 Canvas 语义编辑通过 `PATCH /api/canvas/projects/{id}` 提交 compact mutation：请求携带稳定 `mutationId`、最后确认的 `baseUpdatedAt`，以及节点、连线、助手会话的 upsert/delete 和发生变化的项目字段。成功响应 `data.ack` 返回 `projectId`、新 `updatedAt` 与原 `mutationId`；同一 mutation 重放返回原确认且不重复应用，版本落后返回 409 并保留服务器快照。旧的完整项目 PATCH 只供现有非交互调用路径使用，仍要求 `expectedUpdatedAt`。
 
 `DELETE /api/canvas/projects/{id}/assistant-conversations` 接收 `{ conversationIds: string[] }`，只删除当前用户、当前 Canvas 项目 `chatSessions` 已关联的 Agent 会话。成功响应 `data` 为 `{ deleted, chatSessions, activeChatId }`，其中会话列表和活动 ID 是服务端权威状态；空数组和重复删除返回当前状态且不重复删除。Canvas 主生成会话、跨项目或未关联会话返回 409。删除会话、消息、Run/事件、任务、生成记录和项目会话引用在同一 PostgreSQL 事务或文件 Provider 多文件锁中完成；删除最后一条已持久化会话时，服务端创建一条无 `conversationId` 的空会话。候选媒体只在提交后按全站引用保护回收。

@@ -115,6 +115,26 @@ export async function getCreativeConversationsByIds(userId: string, ids: string[
     return (await readRuntimeFile()).conversations.filter((item) => item.userId === userId && idSet.has(item.id));
 }
 
+export async function getCreativeUserMessagesByRunIds(userId: string, runIds: string[]) {
+    const uniqueIds = Array.from(new Set(runIds.map((id) => id.trim()).filter(Boolean))).slice(0, 100);
+    if (!uniqueIds.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `SELECT message.*
+             FROM creative_messages message
+             JOIN creative_conversations conversation ON conversation.id = message.conversation_id
+             WHERE conversation.user_id = $1 AND message.run_id = ANY($2::text[]) AND message.role = 'user'
+             ORDER BY message.sequence ASC`,
+            [userId, uniqueIds],
+        );
+        return result.rows.map(mapMessage);
+    }
+    const database = await readRuntimeFile();
+    const conversationIds = new Set(database.conversations.filter((conversation) => conversation.userId === userId).map((conversation) => conversation.id));
+    return database.messages.filter((message) => conversationIds.has(message.conversationId) && message.role === "user" && Boolean(message.runId && uniqueIds.includes(message.runId)));
+}
+
 export async function updateCreativeConversation(id: string, userId: string, patch: { title?: string; status?: CreativeConversation["status"] }) {
     const title = patch.title === undefined ? undefined : cleanText(patch.title, 120) || "新对话";
     if (getDatabaseProvider() === "postgres") {

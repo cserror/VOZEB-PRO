@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
-import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
+import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
 import {
     defaultSummary,
     mutateGenerationLogDb,
@@ -100,7 +100,30 @@ export async function deleteGenerationLogResultsForUser(userId: string, id: stri
         const slots = remainingSlots.map((slot) => ({ ...slot, assetIndex: slot.assetIndex === undefined ? undefined : indexMap.get(slot.assetIndex) }));
         return finalizeGenerationLog({ ...current, assets, requestSnapshot: { ...snapshot, slots } }, slots);
     });
-    if (removedAssets.length) await deleteUserMediaAssetsCascade(userId, Array.from(collectLocalMediaStorageKeys(removedAssets)));
+    if (removedAssets.length) await deleteUserLocalMediaAssets(userId, Array.from(collectLocalMediaStorageKeys(removedAssets)));
+    return log;
+}
+
+export async function deleteLegacyGenerationLogAssetsForUser(userId: string, id: string, assetIndexes: number[]) {
+    const selected = new Set(assetIndexes.filter((index) => Number.isSafeInteger(index) && index >= 0));
+    if (!selected.size) return null;
+    let removedAssets: GenerationLogAsset[] = [];
+    const log = await mutateOwnedGenerationLog(normalizeText(id, "", 120), userId, (current) => {
+        if (!current || current.requestSnapshot?.slots.length) return current;
+        removedAssets = current.assets.filter((_, index) => selected.has(index));
+        const assets = current.assets.filter((_, index) => !selected.has(index));
+        const now = new Date().toISOString();
+        return {
+            ...current,
+            assets,
+            count: Math.max(1, assets.length),
+            successCount: current.status === "success" ? assets.length : 0,
+            summary: assets.length ? current.summary : "结果已移除",
+            updatedAt: now,
+            completedAt: current.completedAt || now,
+        };
+    });
+    if (removedAssets.length) await deleteUserLocalMediaAssets(userId, Array.from(collectLocalMediaStorageKeys(removedAssets)));
     return log;
 }
 
@@ -207,12 +230,16 @@ function normalizeTaskResultAssets(input: GenerationTaskLogResultInput, existing
 }
 
 function recordStandaloneGenerationTaskLog(input: GenerationTaskLogResultInput) {
+    const requestSnapshot = input.runId || input.userPrompt || Object.keys(input.parameters || {}).length
+        ? { version: 1 as const, runId: input.runId, userPrompt: input.userPrompt, parameters: input.parameters || {}, references: [], slots: [] }
+        : undefined;
     return recordGenerationLog({
         id: `${input.kind}-task:${input.taskId}`,
         taskId: input.taskId,
         userId: input.userId,
         username: input.username,
         displayName: input.displayName,
+        conversationId: input.conversationId,
         kind: input.kind,
         source: input.source,
         status: input.status,
@@ -226,6 +253,7 @@ function recordStandaloneGenerationTaskLog(input: GenerationTaskLogResultInput) 
         failCount: input.status === "failed" ? 1 : 0,
         assets: input.assets?.length ? input.assets : input.asset?.url ? [input.asset] : [],
         error: input.error,
+        requestSnapshot,
         createdAt: input.createdAt,
         completedAt: Date.now(),
     });

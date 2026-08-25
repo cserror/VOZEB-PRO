@@ -17,8 +17,9 @@ describe("user navigation order", () => {
         expect(navigationTools.map((tool) => tool.slug)).not.toContain("video");
     });
 
-    it("keeps published works and personal assets in the requested asset order", () => {
-        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["作品", "素材", "提示词", "词库"]);
+    it("keeps reusable assets ahead of generation history and leaves works to the community flow", () => {
+        expect(navigationTools.filter((tool) => tool.group === "assets").map((tool) => tool.label)).toEqual(["素材", "提示词", "生成记录"]);
+        expect(navigationTools.map((tool) => tool.slug)).not.toContain("works");
         expect(navigationTools.filter((tool) => tool.group === "community").map((tool) => tool.label)).toEqual(["广场", "主页"]);
         expect(navigationTools.find((tool) => tool.group === "community")?.slug).toBe("community");
     });

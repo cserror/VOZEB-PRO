@@ -78,6 +78,48 @@ export async function createLibraryAsset(userId: string, asset: Asset) {
     return asset;
 }
 
+export async function createLibraryAssetIfAbsent(userId: string, asset: Asset) {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        await postgresQuery(
+            `INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+             ON CONFLICT (id) DO NOTHING`,
+            [asset.id, userId, asset.kind, asset.title, JSON.stringify(asset), new Date(asset.createdAt), new Date(asset.updatedAt)],
+        );
+        const stored = await getLibraryAsset(userId, asset.id);
+        if (!stored) throw new Error("library asset id belongs to another user");
+        return stored;
+    }
+    let stored = asset;
+    await mutateDatabase((database) => {
+        const existing = database.assets.find((record) => record.userId === userId && record.asset.id === asset.id)?.asset;
+        stored = existing || asset;
+        return existing ? database : { ...database, assets: [{ userId, asset }, ...database.assets] };
+    });
+    return stored;
+}
+
+export async function listLibraryGenerationResultIds(userId: string, resultIds: string[]) {
+    const ids = Array.from(new Set(resultIds.map((id) => id.trim()).filter(Boolean))).slice(0, 100);
+    if (!ids.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<{ result_id: string }>(
+            `SELECT DISTINCT asset_json->'metadata'->>'generationResultId' AS result_id
+             FROM library_assets
+             WHERE user_id = $1 AND asset_json->'metadata'->>'generationResultId' = ANY($2::text[])`,
+            [userId, ids],
+        );
+        return result.rows.map((row) => row.result_id).filter(Boolean);
+    }
+    const idSet = new Set(ids);
+    return (await readDatabase()).assets.flatMap((record) => {
+        const resultId = typeof record.asset.metadata?.generationResultId === "string" ? record.asset.metadata.generationResultId : "";
+        return record.userId === userId && idSet.has(resultId) ? [resultId] : [];
+    });
+}
+
 export async function updateLibraryAsset(userId: string, asset: Asset) {
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();

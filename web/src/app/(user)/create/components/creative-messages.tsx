@@ -111,7 +111,7 @@ export function CreativeMessages({
     if (loading) return <div className="grid flex-1 place-items-center text-sm text-stone-400">正在读取会话...</div>;
 
     return (
-        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-3 pt-5 sm:space-y-8 sm:px-8 sm:pt-7" data-testid="creative-message-list">
+        <div className="mx-auto w-full max-w-[1120px] space-y-3 px-3 pb-3 pt-14 sm:space-y-8 sm:px-8 sm:pt-16" data-testid="creative-message-list">
             {hasOlder ? (
                 <div className="flex justify-center">
                     <Button type="text" loading={olderLoading} onClick={onLoadOlder}>
@@ -436,7 +436,7 @@ function CreativeRunSummary({ run, modelNames }: { run?: CreativeAgentRun; model
                                 ))}
                                 {duration ? (
                                     <div className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 text-xs leading-5">
-                                        <dt className="text-[#8b949f] dark:text-[#7f8996]">生成耗时</dt>
+                                        <dt className="text-[#8b949f] dark:text-[#7f8996]">本轮总耗时</dt>
                                         <dd className="text-[#3c4652] dark:text-[#d5dae0]">{duration}</dd>
                                     </div>
                                 ) : null}
@@ -459,7 +459,7 @@ function CreativeRunSummary({ run, modelNames }: { run?: CreativeAgentRun; model
 
 function CreativeRunTiming({ run, time }: { run?: CreativeAgentRun; time: number }) {
     const duration = creativeRunDuration(run);
-    const completedAt = run?.updatedAt || time;
+    const completedAt = run?.timings?.runCompletedAt || run?.updatedAt || time;
     return (
         <div data-testid="creative-run-timing" className="inline-flex shrink-0 items-center gap-1 text-[11px] font-normal leading-5 text-[#98a2b3] dark:text-[#7f8996]">
             <Clock3 className="size-3" aria-hidden />
@@ -467,7 +467,7 @@ function CreativeRunTiming({ run, time }: { run?: CreativeAgentRun; time: number
                 {formatCreativeMessageTime(completedAt)}
             </time>
             {duration ? <span aria-hidden>·</span> : null}
-            {duration ? <span aria-label={`生成耗时：${duration}`}>{duration}</span> : null}
+            {duration ? <span aria-label={`本轮总耗时：${duration}`}>{duration}</span> : null}
         </div>
     );
 }

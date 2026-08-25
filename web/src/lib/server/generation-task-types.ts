@@ -6,6 +6,7 @@ export type GenerationTaskStatus = "pending" | "running" | "success" | "error" |
 export type GenerationTaskContext = {
     conversationId?: string;
     runId?: string;
+    userPrompt?: string;
     surface?: "chat" | "canvas" | "drama";
     projectId?: string;
     episodeId?: string;

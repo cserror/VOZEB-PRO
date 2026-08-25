@@ -20,7 +20,7 @@ import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/securit
 import { resolveModelRequestTimeoutMs } from "@/lib/server/model-request-policy";
 import { mediaTaskSource } from "@/lib/media-management-contract";
 import { runGenerationTaskRecoveryBatch } from "@/lib/server/generation-task-recovery-service";
-import { scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
+import { generationVisualTaskNextPollAt, scheduleGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { VIDEO_PROVIDER_MEDIA_KEYS, parseVideoProviderJson, readVideoProviderHttpError, readVideoProviderId, readVideoProviderUrl } from "@/lib/server/video-provider-response";
 import { buildSeedanceSpecialRequest } from "@/lib/seedance-special";
 import { assertVozebRecommendedVideoReferences, buildVozebRecommendedVideoRequest } from "@/lib/vozeb-recommended-video";
@@ -107,6 +107,13 @@ export async function POST(request: Request) {
                               maxDurationSeconds: channel.capabilityProfile?.maxDurationSeconds,
                           }),
                 };
+                const generationLogParameters = {
+                    ...(parameters.size ? { size: parameters.size } : {}),
+                    ...(parameters.vquality ? { quality: parameters.vquality, resolution: parameters.vquality } : {}),
+                    ...(parameters.videoSeconds === -1 ? {} : { seconds: String(parameters.videoSeconds) }),
+                    ...(body.config?.videoGenerateAudio !== undefined ? { generateAudio: String(booleanValue(body.config.videoGenerateAudio)) } : {}),
+                    ...(body.config?.videoWatermark !== undefined ? { watermark: String(booleanValue(body.config.videoWatermark)) } : {}),
+                };
                 try {
                     assertCapabilityConstraints(channel.capabilityProfile, {
                         capability: "video",
@@ -156,6 +163,7 @@ export async function POST(request: Request) {
                         config: channel,
                         upstream: pendingUpstream,
                         requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
+                        generationLogParameters,
                         prompt,
                         source: mediaTaskSource(body.source, body.context, "video-task"),
                         attempts,
@@ -167,9 +175,10 @@ export async function POST(request: Request) {
                         config: channel,
                         upstream: pendingUpstream,
                         requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
+                        generationLogParameters,
                         attempts,
                     });
-                    localTask = { ...localTask, config: channel, upstream: pendingUpstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
+                    localTask = { ...localTask, config: channel, upstream: pendingUpstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, generationLogParameters, attempts };
                 }
                 const submissionStartedAt = Date.now();
                 await scheduleGenerationTask("video", localTask.id, {
@@ -182,8 +191,8 @@ export async function POST(request: Request) {
                 });
                 try {
                     const upstream = await createUpstream(user.id, origin, cookie, channel, providerPrompt, parameters, references, settings.generationPointMultipliers, billingRequestId);
-                    await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts });
-                    const task = { ...localTask, config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, attempts };
+                    await updateVideoTask(localTask.id, { config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, generationLogParameters, attempts });
+                    const task = { ...localTask, config: channel, upstream, requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds, generationLogParameters, attempts };
                     const submittedAt = Date.now();
                     await scheduleGenerationTask("video", task.id, {
                         executionPhase: "submitted",
@@ -192,7 +201,7 @@ export async function POST(request: Request) {
                         provider: task.upstream.provider,
                         queryPath: task.upstream.queryPath || task.config.advancedConfig?.queryPath || task.upstream.pollPath,
                         submittedAt,
-                        nextPollAt: submittedAt,
+                        nextPollAt: generationVisualTaskNextPollAt({ submittedAt, now: submittedAt }),
                         lastUpstreamStatus: "submitted",
                     });
                     after(() => runGenerationTaskRecoveryBatch({ origin, cookie, limit: 1, taskIds: [task.id] }));

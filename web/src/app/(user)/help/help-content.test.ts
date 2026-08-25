@@ -4,7 +4,7 @@ import { findHelpArticle, helpArticles, searchHelpArticles } from "./help-conten
 
 describe("help center content", () => {
     it("covers every user workspace with complete flows and tutorials", () => {
-        expect(helpArticles.map((article) => article.id)).toEqual(["start", "agent", "image", "video", "canvas", "drama", "assets", "prompts", "account", "rights", "troubleshooting"]);
+        expect(helpArticles.map((article) => article.id)).toEqual(["start", "agent", "image", "video", "canvas", "drama", "generations", "assets", "prompts", "account", "rights", "troubleshooting"]);
         for (const article of helpArticles) {
             expect(article.flow.length).toBeGreaterThanOrEqual(4);
             expect(article.steps.length).toBeGreaterThanOrEqual(3);

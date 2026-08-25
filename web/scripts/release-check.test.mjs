@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,12 +58,19 @@ describe("release type-check and build contract", () => {
         const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "vozeb-standalone-"));
         try {
             const distDir = ".next-production";
+            const sharpPackage = "@img+sharp-linux-x64@0.35.3";
+            const libvipsPackage = "@img+sharp-libvips-linux-x64@1.3.2";
+            const sourceSharpLink = path.join(fixtureRoot, "node_modules", ".pnpm", sharpPackage, "node_modules", "@img", "sharp-libvips-linux-x64");
+            const sourceLibvips = path.join(fixtureRoot, "node_modules", ".pnpm", libvipsPackage, "node_modules", "@img", "sharp-libvips-linux-x64");
+            const targetSharpLink = path.join(fixtureRoot, distDir, "standalone", "node_modules", ".pnpm", sharpPackage, "node_modules", "@img", "sharp-libvips-linux-x64");
+            const relativeLibvipsLink = `../../../${libvipsPackage}/node_modules/@img/sharp-libvips-linux-x64`;
             await Promise.all([
                 mkdir(path.join(fixtureRoot, distDir, "standalone"), { recursive: true }),
                 mkdir(path.join(fixtureRoot, distDir, "static", "chunks"), { recursive: true }),
                 mkdir(path.join(fixtureRoot, "public", "icons"), { recursive: true }),
-                mkdir(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-linux-x64@0.35.3", "node_modules", "@img", "sharp-linux-x64"), { recursive: true }),
-                mkdir(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-libvips-linux-x64@1.3.2", "node_modules", "@img", "sharp-libvips-linux-x64", "lib"), { recursive: true }),
+                mkdir(path.join(fixtureRoot, "node_modules", ".pnpm", sharpPackage, "node_modules", "@img", "sharp-linux-x64"), { recursive: true }),
+                mkdir(path.join(sourceLibvips, "lib"), { recursive: true }),
+                mkdir(path.dirname(targetSharpLink), { recursive: true }),
             ]);
             await Promise.all([
                 writeFile(path.join(fixtureRoot, distDir, "standalone", "server.js"), "server"),
@@ -71,9 +78,10 @@ describe("release type-check and build contract", () => {
                 writeFile(path.join(fixtureRoot, "public", "logo.svg"), "logo"),
                 writeFile(path.join(fixtureRoot, "public", "icon.svg"), "icon"),
                 writeFile(path.join(fixtureRoot, "public", "icons", "icon-192.png"), "png"),
-                writeFile(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-linux-x64@0.35.3", "node_modules", "@img", "sharp-linux-x64", "sharp.node"), "native"),
-                writeFile(path.join(fixtureRoot, "node_modules", ".pnpm", "@img+sharp-libvips-linux-x64@1.3.2", "node_modules", "@img", "sharp-libvips-linux-x64", "lib", "libvips.so"), "libvips"),
+                writeFile(path.join(fixtureRoot, "node_modules", ".pnpm", sharpPackage, "node_modules", "@img", "sharp-linux-x64", "sharp.node"), "native"),
+                writeFile(path.join(sourceLibvips, "lib", "libvips.so"), "libvips"),
             ]);
+            await Promise.all([symlink(relativeLibvipsLink, sourceSharpLink, "dir"), symlink(sourceLibvips, targetSharpLink, "dir")]);
 
             const result = await prepareStandaloneAssets({ webRoot: fixtureRoot, distDir });
 
@@ -85,6 +93,7 @@ describe("release type-check and build contract", () => {
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "public", "icons", "icon-192.png"))).toBe(true);
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "node_modules", ".pnpm", "@img+sharp-linux-x64@0.35.3", "node_modules", "@img", "sharp-linux-x64", "sharp.node"))).toBe(true);
             expect(existsSync(path.join(fixtureRoot, distDir, "standalone", "node_modules", ".pnpm", "@img+sharp-libvips-linux-x64@1.3.2", "node_modules", "@img", "sharp-libvips-linux-x64", "lib", "libvips.so"))).toBe(true);
+            expect(await readlink(targetSharpLink)).toBe(relativeLibvipsLink);
         } finally {
             await rm(fixtureRoot, { recursive: true, force: true });
         }

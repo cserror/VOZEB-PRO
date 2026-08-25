@@ -33,6 +33,7 @@ import {
     getCreativeConversationContext,
     getCreativeConversation,
     getCreativeConversationsByIds,
+    getCreativeUserMessagesByRunIds,
     getCreativeAsset,
     getCreativeAssetsByIds,
     getCreativeRunByClientRequestId,
@@ -70,6 +71,15 @@ describe("creative runtime file provider", () => {
                 lastUpstreamStatus: "created",
             },
         ]);
+    });
+
+    it("returns only the current user's exact Agent input messages", async () => {
+        await createBundle(run({ id: "run-one" }));
+
+        await expect(getCreativeUserMessagesByRunIds("user", ["run-one"])).resolves.toEqual([
+            expect.objectContaining({ id: "input-message", conversationId: "conversation", runId: "run-one", role: "user", content: "生成一张图" }),
+        ]);
+        await expect(getCreativeUserMessagesByRunIds("other-user", ["run-one"])).resolves.toEqual([]);
     });
 
     it("keeps the completed first round in the next Agent run context", async () => {

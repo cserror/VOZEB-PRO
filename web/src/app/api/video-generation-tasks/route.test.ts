@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     updateVideoTask: vi.fn(),
     writeVideoGenerationLog: vi.fn(),
     scheduleGenerationTask: vi.fn(),
+    nextVisualPoll: vi.fn(({ submittedAt }: { submittedAt: number }) => submittedAt + 30_000),
     normalizeImageReferences: vi.fn(async (input: { references: unknown[] }) => input.references),
     requireManagedMediaInputOwner: vi.fn(async () => "user"),
     refundUserPoints: vi.fn(),
@@ -47,7 +48,7 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({})),
 }));
 vi.mock("@/lib/server/generation-task-recovery-service", () => ({ runGenerationTaskRecoveryBatch: vi.fn() }));
-vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.scheduleGenerationTask }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ generationVisualTaskNextPollAt: mocks.nextVisualPoll, scheduleGenerationTask: mocks.scheduleGenerationTask }));
 vi.mock("@/lib/server/video-task-log", () => ({ writeVideoGenerationLog: mocks.writeVideoGenerationLog }));
 vi.mock("@/lib/server/video-reference-image", () => ({ normalizeVideoProviderImageReferences: mocks.normalizeImageReferences }));
 vi.mock("@/lib/server/video-task-store", () => ({
@@ -124,6 +125,8 @@ describe("video generation candidate failover", () => {
         const submittingSchedules = mocks.scheduleGenerationTask.mock.calls.filter(([, , patch]) => patch.executionPhase === "submitting");
         expect(submittingSchedules).toHaveLength(2);
         expect(submittingSchedules.every(([, , patch]) => patch.nextPollAt >= startedAt + 30 * 60_000)).toBe(true);
+        const submittedSchedule = mocks.scheduleGenerationTask.mock.calls.find(([, , patch]) => patch.executionPhase === "submitted")?.[2];
+        expect(submittedSchedule.nextPollAt - submittedSchedule.submittedAt).toBe(30_000);
     });
 
     it("returns the original idempotent task before checking concurrency", async () => {

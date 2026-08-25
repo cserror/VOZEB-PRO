@@ -130,8 +130,7 @@ export default function CanvasPage() {
             <div className="mx-auto flex w-full max-w-7xl flex-col gap-2 px-2 py-2 sm:gap-6 sm:px-6 sm:py-8">
                 <header className="flex flex-wrap items-end justify-between gap-2.5 border-b border-border pb-3 sm:gap-4 sm:pb-5">
                     <div>
-                        <p className="text-xs text-stone-500">画布库</p>
-                        <h1 className="mt-1 text-xl font-semibold sm:mt-2 sm:text-2xl">我的画布</h1>
+                        <h1 className="text-xl font-semibold sm:text-2xl">我的画布</h1>
                     </div>
                     <div className="flex items-center gap-2">
                         {selectedIds.length ? (

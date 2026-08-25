@@ -50,7 +50,7 @@ describe("creativeRunPresentation", () => {
     });
 
     it("formats the persisted run duration without inventing a timeout", () => {
-        expect(creativeRunDuration({ createdAt: 1_000, updatedAt: 66_000 } as CreativeAgentRun)).toBe("1分5秒");
+        expect(creativeRunDuration({ createdAt: 1_000, updatedAt: 600_000, timings: { requestAcceptedAt: 1_000, runCompletedAt: 66_000 } } as CreativeAgentRun)).toBe("1分5秒");
         expect(creativeRunDuration({ createdAt: 1_000, updatedAt: 1_200 } as CreativeAgentRun)).toBe("1秒");
         expect(creativeRunDuration({ createdAt: 2_000, updatedAt: 1_000 } as CreativeAgentRun)).toBe("");
     });

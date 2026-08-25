@@ -132,6 +132,7 @@ const TTL = 365 * 24 * 60 * 60 * 1000;
 export async function createAgentRun(userId: string, input: CreativeRunRequest) {
     await assertVideoFrameAssets(userId, input);
     const now = Date.now();
+    const publicPrompt = input.publicPrompt || input.prompt;
     const conversationId = input.conversationId || `conversation-${nanoid()}`;
     const snapshot = input.surface === "canvas" ? normalizeAgentRunCanvasSnapshot(input.snapshot, input.projectId) : input.surface === "drama" && input.projectId ? await resolveDramaRunSnapshot(userId, input.projectId, input.snapshot) : input.snapshot;
     const run: AgentRun = {
@@ -146,7 +147,7 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         prompt: input.prompt,
         promptSchemaVersion: AGENT_REQUEST_SCHEMA,
         promptTransport: "json",
-        ...(input.publicPrompt ? { publicPrompt: input.publicPrompt } : {}),
+        publicPrompt,
         snapshot,
         referencedAssetIds: input.assetIds,
         selectedSkillIds: input.skillIds,
@@ -161,7 +162,6 @@ export async function createAgentRun(userId: string, input: CreativeRunRequest) 
         createdAt: now,
         updatedAt: now,
     };
-    const publicPrompt = input.publicPrompt || input.prompt;
     return createCreativeRunBundle(userId, {
         run,
         conversationId: input.conversationId,

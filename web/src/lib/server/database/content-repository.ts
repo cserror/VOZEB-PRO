@@ -2,7 +2,7 @@ import type { QueryExecutor } from "@/lib/server/database/postgres";
 import type { AnnouncementRecord, GenerationKind, GenerationLogAssetRecord, GenerationLogRecord, GenerationStatus, PageInput, PageResult, PromptRecord, PromptScope } from "./repository-shared";
 import { CREATE_OVERVIEW_RECENT_ASSET_LIMIT, type CreateOverviewAsset, type CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { mapAnnouncement, mapGenerationLog, mapGenerationLogAsset, mapPrompt } from "./repository-record-mappers";
-import { jsonParam, normalizePage, normalizePageSize, pageResult } from "./repository-shared";
+import { jsonParam, normalizePage, normalizePageSize, numberValue, optionalIso, optionalNumber, optionalString, pageResult, stringValue } from "./repository-shared";
 
 export type GenerationLogOverviewBucket = { key: string; value: number };
 export type GenerationLogOverviewAggregate = {
@@ -16,6 +16,25 @@ export type GenerationLogOverviewAggregate = {
     kinds: GenerationLogOverviewBucket[];
 };
 export type GenerationLogCreateOverview = { runningTasks: CreateOverviewTask[]; recentAssets: CreateOverviewAsset[] };
+export type GenerationHistoryResultRecord = {
+    logId: string;
+    slotId?: string;
+    assetIndex?: number;
+    kind: GenerationKind;
+    source: string;
+    status: GenerationStatus;
+    title: string;
+    originalPrompt: string;
+    model: string;
+    parameters: Record<string, string>;
+    conversationId?: string;
+    taskId?: string;
+    asset?: GenerationLogAssetRecord;
+    error?: string;
+    durationMs: number;
+    createdAt: string;
+    completedAt?: string;
+};
 
 export class AnnouncementsRepository {
     constructor(private readonly db: QueryExecutor) {}
@@ -202,6 +221,64 @@ export class GenerationLogsRepository {
         );
         const logs = await this.attachAssets(result.rows.map(mapGenerationLog));
         return pageResult(logs, Number(result.rows[0]?.total_count || 0), page, pageSize);
+    }
+
+    async listResultPage(input: PageInput & { userId: string; kind?: GenerationKind; status?: GenerationStatus; keyword?: string; startAt?: string; endAt?: string }): Promise<PageResult<GenerationHistoryResultRecord>> {
+        const page = normalizePage(input.page);
+        const pageSize = normalizePageSize(input.pageSize);
+        const keyword = input.keyword?.trim().toLowerCase() || "";
+        const result = await this.db.query<Record<string, unknown>>(
+            `
+            WITH scoped_logs AS MATERIALIZED (
+                SELECT gl.*,
+                       CASE WHEN jsonb_typeof(gl.request_snapshot->'slots') = 'array' THEN gl.request_snapshot->'slots' ELSE '[]'::jsonb END AS result_slots,
+                       COALESCE(NULLIF(btrim(gl.request_snapshot->>'userPrompt'), ''), CASE WHEN gl.source IN ('image-workbench', 'video-workbench') THEN gl.prompt ELSE '' END, '') AS original_prompt
+                FROM generation_logs gl
+                WHERE gl.user_id = $1
+                  AND ($2::text IS NULL OR gl.kind = $2)
+                  AND ($3 = '' OR lower(concat_ws(' ', gl.title, gl.model, gl.request_snapshot->>'userPrompt', CASE WHEN gl.source IN ('image-workbench', 'video-workbench') THEN gl.prompt ELSE '' END)) LIKE $4)
+                  AND ($5::timestamptz IS NULL OR gl.created_at >= $5)
+                  AND ($6::timestamptz IS NULL OR gl.created_at <= $6)
+            ), result_rows AS (
+                SELECT log.*, slot.value AS slot_json, slot.ordinality::integer - 1 AS result_order,
+                       NULLIF(slot.value->>'id', '') AS slot_id,
+                       CASE WHEN slot.value->>'assetIndex' ~ '^\\d+$' THEN (slot.value->>'assetIndex')::integer END AS asset_index
+                FROM scoped_logs log
+                CROSS JOIN LATERAL jsonb_array_elements(log.result_slots) WITH ORDINALITY AS slot(value, ordinality)
+                UNION ALL
+                SELECT log.*, NULL::jsonb AS slot_json, asset.sort_order AS result_order, NULL::text AS slot_id, asset.sort_order AS asset_index
+                FROM scoped_logs log
+                JOIN generation_log_assets asset ON asset.generation_log_id = log.id
+                WHERE jsonb_array_length(log.result_slots) = 0
+                UNION ALL
+                SELECT log.*, NULL::jsonb AS slot_json, 0 AS result_order, NULL::text AS slot_id, NULL::integer AS asset_index
+                FROM scoped_logs log
+                WHERE jsonb_array_length(log.result_slots) = 0
+                  AND NOT EXISTS (SELECT 1 FROM generation_log_assets asset WHERE asset.generation_log_id = log.id)
+            ), filtered_results AS (
+                SELECT rows.*,
+                       CASE WHEN rows.slot_json->>'status' IN ('pending', 'success', 'failed') THEN rows.slot_json->>'status' ELSE rows.status END AS result_status
+                FROM result_rows rows
+            )
+            SELECT rows.id AS log_id, rows.slot_id, rows.asset_index, rows.kind, rows.source, rows.result_status, rows.title, rows.original_prompt,
+                   COALESCE(NULLIF(rows.slot_json->>'taskModel', ''), rows.model) AS result_model,
+                   COALESCE(rows.slot_json->'parameters', rows.request_snapshot->'parameters', '{}'::jsonb) AS parameters,
+                   rows.conversation_id, COALESCE(NULLIF(rows.slot_json->>'taskId', ''), rows.task_id) AS result_task_id,
+                   COALESCE(NULLIF(rows.slot_json->>'error', ''), rows.error) AS result_error,
+                   rows.duration_ms, rows.created_at, rows.completed_at,
+                   asset.type AS asset_type, asset.url AS asset_url, asset.remote_url AS asset_remote_url, asset.server_url AS asset_server_url,
+                   asset.mime_type AS asset_mime_type, asset.width AS asset_width, asset.height AS asset_height, asset.bytes AS asset_bytes,
+                   count(*) OVER() AS total_count
+            FROM filtered_results rows
+            LEFT JOIN generation_log_assets asset ON asset.generation_log_id = rows.id AND asset.sort_order = rows.asset_index
+            WHERE ($7::text IS NULL OR rows.result_status = $7)
+            ORDER BY rows.created_at DESC, rows.id ASC, rows.result_order ASC
+            LIMIT $8 OFFSET $9
+            `,
+            [input.userId, input.kind || null, keyword, `%${keyword}%`, input.startAt || null, input.endAt || null, input.status || null, pageSize, (page - 1) * pageSize],
+        );
+        const items = result.rows.map(mapGenerationHistoryResultRecord);
+        return pageResult(items, Number(result.rows[0]?.total_count || 0), page, pageSize);
     }
 
     async getOverviewAggregate(input: { startAt: string; endAt: string; timeZone: string }): Promise<GenerationLogOverviewAggregate> {
@@ -478,6 +555,44 @@ function overviewBuckets(value: unknown): GenerationLogOverviewBucket[] {
             return { key: String(source.key || "").trim(), value: Math.max(0, Number(source.value) || 0) };
         })
         .filter((item) => Boolean(item.key) && item.value > 0);
+}
+
+function mapGenerationHistoryResultRecord(row: Record<string, unknown>): GenerationHistoryResultRecord {
+    const assetUrl = stringValue(row.asset_url);
+    const assetType = row.asset_type === "video" ? "video" : row.asset_type === "image" ? "image" : undefined;
+    const parameters = row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters) ? (row.parameters as Record<string, unknown>) : {};
+    return {
+        logId: stringValue(row.log_id),
+        slotId: optionalString(row.slot_id),
+        assetIndex: optionalNumber(row.asset_index),
+        kind: row.kind === "video" ? "video" : "image",
+        source: stringValue(row.source),
+        status: row.result_status === "pending" || row.result_status === "failed" ? row.result_status : "success",
+        title: stringValue(row.title),
+        originalPrompt: stringValue(row.original_prompt),
+        model: stringValue(row.result_model),
+        parameters: Object.fromEntries(Object.entries(parameters).flatMap(([key, value]) => (typeof value === "string" && value.trim() ? [[key, value.trim()]] : []))),
+        conversationId: optionalString(row.conversation_id),
+        taskId: optionalString(row.result_task_id),
+        ...(assetType && assetUrl
+            ? {
+                  asset: {
+                      type: assetType,
+                      url: assetUrl,
+                      remoteUrl: optionalString(row.asset_remote_url),
+                      serverUrl: optionalString(row.asset_server_url),
+                      mimeType: optionalString(row.asset_mime_type),
+                      width: optionalNumber(row.asset_width),
+                      height: optionalNumber(row.asset_height),
+                      bytes: optionalNumber(row.asset_bytes),
+                  },
+              }
+            : {}),
+        error: optionalString(row.result_error),
+        durationMs: numberValue(row.duration_ms),
+        createdAt: isoValue(row.created_at),
+        completedAt: optionalIso(row.completed_at),
+    };
 }
 
 function jsonObjects(value: unknown): Record<string, unknown>[] {

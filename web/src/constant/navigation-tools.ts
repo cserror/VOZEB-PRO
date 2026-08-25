@@ -1,4 +1,4 @@
-import { BookMarked, Clapperboard, Compass, FileText, GalleryVerticalEnd, Images, Maximize2, Sparkles, UserRound } from "lucide-react";
+import { BookMarked, Clapperboard, Compass, History, Images, Maximize2, Sparkles, UserRound } from "lucide-react";
 
 export const navigationGroups = [
     { id: "create", label: "创作" },
@@ -37,13 +37,6 @@ export const navigationTools = [
         icon: Clapperboard,
     },
     {
-        slug: "works",
-        label: "作品",
-        description: "发布、审核与分享",
-        group: "assets",
-        icon: GalleryVerticalEnd,
-    },
-    {
         slug: "assets",
         label: "素材",
         description: "图片、视频与音频",
@@ -51,18 +44,18 @@ export const navigationTools = [
         icon: Images,
     },
     {
-        slug: "my-prompts",
+        slug: "prompts",
         label: "提示词",
-        description: "个人提示词",
+        description: "提示词库与我的提示词",
         group: "assets",
         icon: BookMarked,
     },
     {
-        slug: "prompts",
-        label: "词库",
-        description: "公共提示词",
+        slug: "generations",
+        label: "生成记录",
+        description: "全部图片与视频结果",
         group: "assets",
-        icon: FileText,
+        icon: History,
     },
     {
         slug: "community",

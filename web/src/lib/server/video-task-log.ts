@@ -13,6 +13,9 @@ export function writeVideoGenerationLog(task: VideoTask, status: "success" | "fa
         userId: task.userId,
         username: task.username || "",
         displayName: task.displayName || task.username || "",
+        conversationId: task.conversationId,
+        runId: task.runId,
+        userPrompt: task.userPrompt,
         kind: "video",
         source: isGenerationSource(task.source) ? task.source : "video-workbench",
         status,
@@ -21,6 +24,7 @@ export function writeVideoGenerationLog(task: VideoTask, status: "success" | "fa
         model: generationModelId(task.config),
         summary: status === "success" ? "视频生成完成" : "视频生成失败",
         durationMs: Math.max(0, Date.now() - task.createdAt),
+        parameters: task.generationLogParameters || (task.requestedDurationSeconds ? { seconds: String(task.requestedDurationSeconds) } : undefined),
         asset:
             status === "success" && url
                 ? {

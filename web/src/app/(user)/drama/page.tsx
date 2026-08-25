@@ -58,11 +58,7 @@ export default function DramaPage() {
             <div className="mx-auto w-full max-w-7xl px-2 py-2 sm:px-6 sm:py-8">
                 <header className="flex items-end justify-between gap-3 border-b border-border pb-3 sm:gap-5 sm:pb-6">
                     <div className="min-w-0">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                            <Clapperboard className="size-4" />
-                            短剧生产线
-                        </div>
-                        <h1 className="mt-1.5 text-xl font-semibold sm:mt-2 sm:text-2xl">短剧项目</h1>
+                        <h1 className="text-xl font-semibold sm:text-2xl">短剧项目</h1>
                         <p className="mt-1.5 text-xs leading-5 text-muted-foreground sm:mt-2 sm:text-sm">
                             共 {projectTotal} 个项目 · 已加载 {projects.length} 个 / {episodeCount} 集 · {pendingCount} 个执行中任务
                         </p>

@@ -41,6 +41,17 @@ describe("writeImageGenerationLog", () => {
 
         expect(mocks.record.mock.calls[0][0].assets[0]).toMatchObject({ url: serverUrl, serverUrl, remoteUrl });
     });
+
+    it("passes public Agent context and image parameters to the generation log", async () => {
+        await writeImageGenerationLog(imageTask(), "success", [{ dataUrl: "/api/generation-log-assets/result.png" }], 10);
+
+        expect(mocks.record.mock.calls[0][0]).toMatchObject({
+            conversationId: "conversation-one",
+            runId: "run-one",
+            userPrompt: "用户原始需求",
+            parameters: { size: "1024x1024", quality: "high", count: "1" },
+        });
+    });
 });
 
 function imageTask(config: Partial<ImageTask["config"]> = {}): ImageTask {
@@ -54,12 +65,16 @@ function imageTask(config: Partial<ImageTask["config"]> = {}): ImageTask {
         status: "running",
         createdAt: 1,
         updatedAt: 1,
+        conversationId: "conversation-one",
+        runId: "run-one",
+        userPrompt: "用户原始需求",
         config: {
             baseUrl: "https://provider.example",
             apiKey: "key",
             apiFormat: "openai",
             model: "image-one",
             size: "1024x1024",
+            quality: "high",
             advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" },
             ...config,
         },

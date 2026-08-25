@@ -149,6 +149,32 @@ describe("generation log task service", () => {
         expect(log?.requestSnapshot?.slots[0]?.prompt).toBe(executionPrompt);
     });
 
+    it("stores public Agent context in a standalone task log without exposing the execution prompt", async () => {
+        const result = await service.recordGenerationTaskLogResult({
+            taskId: "agent-image-one",
+            userId: "user-one",
+            username: "user",
+            displayName: "User",
+            conversationId: "conversation-one",
+            runId: "run-one",
+            userPrompt: "用户原始提示词",
+            parameters: { size: "1024x1024", quality: "high" },
+            kind: "image",
+            source: "agent",
+            status: "success",
+            title: "Agent 图片",
+            prompt: "不得公开的内部执行提示词",
+            model: "image-model",
+            summary: "图片生成完成",
+            durationMs: 100,
+            asset: { type: "image", url: assetUrl("agent") },
+            createdAt: Date.now(),
+        });
+
+        expect(result.log).toMatchObject({ conversationId: "conversation-one", prompt: "不得公开的内部执行提示词" });
+        expect(result.log?.requestSnapshot).toMatchObject({ userPrompt: "用户原始提示词", parameters: { size: "1024x1024", quality: "high" } });
+    });
+
     it("rejects mutations when the record belongs to another user", async () => {
         await createDraft("log-owned", ["slot-a"]);
 

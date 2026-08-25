@@ -1,7 +1,7 @@
 "use client";
 
 import { Input, Select } from "antd";
-import { ArrowUpRight, BookOpenText, CircleHelp, Clapperboard, ImagePlus, Images, Maximize2, Rocket, Search, ShieldCheck, Sparkles, Video, WalletCards, Wrench, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, BookOpenText, CircleHelp, Clapperboard, History, ImagePlus, Images, Maximize2, Rocket, Search, ShieldCheck, Sparkles, Video, WalletCards, Wrench, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -17,6 +17,7 @@ const icons: Record<HelpArticleId, LucideIcon> = {
     video: Video,
     canvas: Maximize2,
     drama: Clapperboard,
+    generations: History,
     assets: Images,
     prompts: BookOpenText,
     account: WalletCards,
@@ -31,6 +32,7 @@ const iconStyles: Record<HelpArticleId, string> = {
     video: "bg-indigo-50 text-indigo-700 dark:bg-indigo-300/10 dark:text-indigo-300",
     canvas: "bg-cyan-50 text-cyan-700 dark:bg-cyan-300/10 dark:text-cyan-300",
     drama: "bg-amber-50 text-amber-700 dark:bg-amber-300/10 dark:text-amber-300",
+    generations: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
     assets: "bg-teal-50 text-teal-700 dark:bg-teal-300/10 dark:text-teal-300",
     prompts: "bg-orange-50 text-orange-700 dark:bg-orange-300/10 dark:text-orange-300",
     account: "bg-violet-50 text-violet-700 dark:bg-violet-300/10 dark:text-violet-300",

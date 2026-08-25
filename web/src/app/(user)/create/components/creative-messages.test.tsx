@@ -406,7 +406,7 @@ describe("CreativeMessages", () => {
         expect(markup).toContain("16:9");
         expect(markup).toContain("720P");
         expect(markup).toContain("10秒");
-        expect(markup).toContain('aria-label="生成耗时：6秒"');
+        expect(markup).toContain('aria-label="本轮总耗时：6秒"');
         expect(markup).toContain("完成时间：");
         expect(markup).toContain('data-testid="creative-run-timing"');
         expect(markup).toContain('aria-label="查看本轮创作详细信息"');
@@ -696,6 +696,8 @@ describe("CreativeMessages", () => {
         expect(markup).toContain('data-testid="creative-assistant-avatar"');
         expect(markup).toContain("size-11");
         expect(markup).toContain("!size-8");
+        expect(markup).toContain("pb-3 pt-14");
+        expect(markup).toContain("sm:px-8 sm:pt-16");
         expect(markup).toContain("rounded-[14px]");
         expect(markup).toContain("bg-[linear-gradient(135deg,#f3f1ff_0%,#ebeaff_100%)]");
         expect(markup).toContain("1970");

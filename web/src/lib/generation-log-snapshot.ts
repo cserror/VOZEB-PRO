@@ -47,6 +47,7 @@ export type GenerationLogSlotSnapshot = {
 
 export type GenerationLogRequestSnapshot = {
     version: 1;
+    runId?: string;
     userPrompt?: string;
     parameters: GenerationLogSnapshotParameters;
     references: GenerationLogReferenceSnapshot[];

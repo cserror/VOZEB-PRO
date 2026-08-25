@@ -85,6 +85,19 @@ export async function getStoredGenerationTaskRecord(type: GenerationTaskType, id
     return (await readFileTasks()).find((task) => task.id === id && task.type === type && task.expiresAt > Date.now()) || null;
 }
 
+export async function getStoredGenerationTaskRecordsByIds(userId: string, ids: string[]) {
+    const ownerUserId = cleanContextText(userId);
+    const targetIds = Array.from(new Set(ids.map(cleanContextText).filter(Boolean))).slice(0, 100);
+    if (!ownerUserId || !targetIds.length) return [];
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(`SELECT * FROM generation_tasks WHERE user_id = $1 AND id = ANY($2::text[])`, [ownerUserId, targetIds]);
+        return result.rows.map(mapStoredTaskRecord);
+    }
+    const idSet = new Set(targetIds);
+    return (await readFileTasks()).filter((task) => task.userId === ownerUserId && idSet.has(task.id));
+}
+
 export async function listStoredGenerationTaskRecordsByRunIds(runIds: string[], userIds: string[] = []) {
     const ids = Array.from(new Set(runIds.map(cleanContextText).filter(Boolean)));
     const owners = Array.from(new Set(userIds.map(cleanContextText).filter(Boolean)));
@@ -949,6 +962,7 @@ function normalizeGenerationTaskContext(context: GenerationTaskContext): Generat
     return {
         conversationId: cleanContextText(context.conversationId),
         runId: cleanContextText(context.runId),
+        userPrompt: cleanPromptText(context.userPrompt),
         surface: context.surface === "chat" || context.surface === "canvas" || context.surface === "drama" ? context.surface : undefined,
         projectId: cleanContextText(context.projectId),
         episodeId: cleanContextText(context.episodeId),
@@ -967,6 +981,7 @@ function preserveTaskContext(previous: StoredGenerationTaskRecord | undefined, n
     return {
         conversationId: next.conversationId || previous?.conversationId,
         runId: next.runId || previous?.runId,
+        userPrompt: next.userPrompt || previous?.userPrompt,
         surface: next.surface || previous?.surface,
         projectId: next.projectId || previous?.projectId,
         episodeId: next.episodeId || previous?.episodeId,
@@ -1002,6 +1017,10 @@ function preserveTaskExecution(previous?: StoredGenerationTaskRecord) {
 
 function cleanContextText(value?: string) {
     return value?.trim().slice(0, 160) || undefined;
+}
+
+function cleanPromptText(value?: string) {
+    return value?.trim().slice(0, 4000) || undefined;
 }
 
 function cleanUpstreamTaskId(value?: string) {
@@ -1046,6 +1065,7 @@ function mapStoredTaskRecord(row: Record<string, unknown>): StoredGenerationTask
         expiresAt: databaseTime(row.expires_at),
         conversationId: cleanContextText(String(row.conversation_id || "")),
         runId: cleanContextText(String(row.run_id || "")),
+        userPrompt: cleanPromptText(typeof payload.userPrompt === "string" ? payload.userPrompt : undefined),
         surface: isTaskSurface(row.surface) ? row.surface : undefined,
         projectId: cleanContextText(String(row.project_id || "")),
         episodeId: cleanContextText(String(payload.episodeId || "")),

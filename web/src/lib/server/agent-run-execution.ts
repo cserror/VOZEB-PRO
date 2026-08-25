@@ -736,7 +736,7 @@ export async function dispatchTask(task: AgentRunTask, origin: string, cookie: s
     const path = task.type === "image" ? "/api/image-tasks" : task.type === "video" ? "/api/video-generation-tasks" : task.type === "audio" ? "/api/audio-tasks" : "/api/text-tasks";
     const references = taskReferences(task);
     const source = run.surface === "canvas" ? "canvas" : run.surface === "drama" ? "drama" : "agent";
-    const context = { conversationId: run.conversationId, runId: run.id, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
+    const context = { conversationId: run.conversationId, runId: run.id, userPrompt: run.publicPrompt, surface: run.surface, projectId: run.projectId, parentTaskId: task.id, attemptNo: attempt, clientRequestId: `${run.clientRequestId}:${task.id}:${attempt}` };
     const body =
         task.type === "image"
             ? {

@@ -27,6 +27,7 @@ export type GenerationTaskLease = Pick<
 
 export type GenerationTaskSchedulePatch = Partial<Pick<GenerationTaskLease, "executionPhase" | "upstreamTaskId" | "channelId" | "provider" | "queryPath" | "submittedAt" | "nextPollAt" | "lastPollAt" | "lastUpstreamStatus" | "resultPayload">>;
 type GenerationTaskScheduleOptions = { cancellation?: boolean; resetUpstreamIdentity?: boolean };
+type GenerationTaskPollInput = { submittedAt?: number; consecutiveErrors?: number; now?: number; webhook?: boolean; initialPollDelayMs?: number; fastPollUntilMs?: number };
 
 const SCHEDULABLE_TYPES = new Set<GenerationTaskType>(["image", "video", "audio", "text", "agent"]);
 const ACTIVE_PHASES = new Set<GenerationTaskExecutionPhase>(["created", "submitting", "submitted", "polling", "result_ready", "persisting"]);
@@ -56,6 +57,33 @@ export async function scheduleGenerationTask(type: GenerationTaskType, id: strin
             if (task.id !== id || task.type !== type) return task;
             if (!canApplySchedulePatch(task, options)) return task;
             const updated = applyPatch(task, normalized);
+            result = toLease(updated);
+            return updated;
+        });
+        return { tasks: next, result };
+    });
+}
+
+export async function wakeAgentGenerationTask(idValue: string | undefined, now = Date.now()) {
+    const id = clean(idValue, 160);
+    if (!id) return null;
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery<Record<string, unknown>>(
+            `UPDATE generation_tasks
+             SET next_poll_at = LEAST(COALESCE(next_poll_at, $2), $2)
+             WHERE id = $1 AND task_type = 'agent' AND status IN ('pending', 'running')
+               AND execution_phase = ANY($3::text[])
+             RETURNING *`,
+            [id, new Date(now), [...ACTIVE_PHASES]],
+        );
+        return result.rows[0] ? mapLease(result.rows[0]) : null;
+    }
+    return withGenerationTaskFileMutation(async (tasks) => {
+        let result: GenerationTaskLease | null = null;
+        const next = tasks.map((task) => {
+            if (task.id !== id || task.type !== "agent" || (task.status !== "pending" && task.status !== "running") || !ACTIVE_PHASES.has(task.executionPhase || "created")) return task;
+            const updated = { ...task, nextPollAt: Math.min(Number(task.nextPollAt || now), now) };
             result = toLease(updated);
             return updated;
         });
@@ -198,14 +226,21 @@ export async function releaseGenerationTaskLease(type: GenerationTaskType, id: s
     });
 }
 
-export function generationTaskNextPollAt(input: { submittedAt?: number; consecutiveErrors?: number; now?: number; webhook?: boolean }) {
+export function generationTaskNextPollAt(input: GenerationTaskPollInput) {
     const now = finiteTime(input.now) || Date.now();
     const submittedAt = finiteTime(input.submittedAt) || now;
     const errors = Math.max(0, Math.floor(Number(input.consecutiveErrors) || 0));
     if (errors) return now + Math.min(60_000, 5_000 * 2 ** Math.min(errors, 4));
     const age = Math.max(0, now - submittedAt);
-    const interval = input.webhook ? 30_000 : age < 30_000 ? 5_000 : age < 120_000 ? 10_000 : 25_000;
+    const initialPollDelayMs = Math.max(0, Math.floor(Number(input.initialPollDelayMs) || 0));
+    if (age < initialPollDelayMs) return submittedAt + initialPollDelayMs;
+    const fastPollUntilMs = Math.max(0, Math.floor(Number(input.fastPollUntilMs) || 30_000));
+    const interval = input.webhook ? 30_000 : age < fastPollUntilMs ? 5_000 : age < 120_000 ? 10_000 : 25_000;
     return now + interval;
+}
+
+export function generationVisualTaskNextPollAt(input: Omit<GenerationTaskPollInput, "initialPollDelayMs" | "fastPollUntilMs">) {
+    return generationTaskNextPollAt({ ...input, initialPollDelayMs: 30_000, fastPollUntilMs: 60_000 });
 }
 
 function scheduleValues(id: string, type: GenerationTaskType, patch: GenerationTaskSchedulePatch) {

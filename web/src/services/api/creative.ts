@@ -26,6 +26,17 @@ export type CreativeAgentRun = {
     generationPreferences?: CreativeGenerationPreferences;
     createdAt?: number;
     updatedAt?: number;
+    timings?: {
+        requestAcceptedAt: number;
+        planningStartedAt?: number;
+        plannerFirstByteAt?: number;
+        planningCompletedAt?: number;
+        firstTaskSubmittedAt?: number;
+        firstResultReadyAt?: number;
+        allResultsReadyAt?: number;
+        reviewCompletedAt?: number;
+        runCompletedAt?: number;
+    };
     assetIds: string[];
     tasks: Array<{
         id: string;

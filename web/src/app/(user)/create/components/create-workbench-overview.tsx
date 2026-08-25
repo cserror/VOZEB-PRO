@@ -41,8 +41,8 @@ export function CreateWorkbenchOverview({ onUseAsset }: { onUseAsset: (asset: Cr
                         </h2>
                         <p className={sectionHintClass}>点击图片或视频可直接放大查看</p>
                     </div>
-                    <Link href="/assets" className="inline-flex shrink-0 items-center gap-1 text-xs text-[#697381] transition hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:text-white">
-                        查看素材库 <ArrowUpRight className="size-3.5" />
+                    <Link href="/generations" className="inline-flex shrink-0 items-center gap-1 text-xs text-[#697381] transition hover:text-[#20242a] dark:text-[#9aa3af] dark:hover:text-white">
+                        查看全部生成记录 <ArrowUpRight className="size-3.5" />
                     </Link>
                 </div>
                 {loading ? <OverviewLoading label="正在读取最近生成..." /> : null}

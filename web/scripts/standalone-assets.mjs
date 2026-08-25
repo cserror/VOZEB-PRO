@@ -45,7 +45,7 @@ async function copySharpRuntimePackages(webRoot, standaloneRoot) {
     }
 
     await mkdir(targetPnpmRoot, { recursive: true });
-    await Promise.all(packages.map((entry) => cp(path.join(sourcePnpmRoot, entry.name), path.join(targetPnpmRoot, entry.name), { recursive: true, force: true })));
+    await Promise.all(packages.map((entry) => cp(path.join(sourcePnpmRoot, entry.name), path.join(targetPnpmRoot, entry.name), { recursive: true, force: true, verbatimSymlinks: true })));
     return packages.map((entry) => entry.name).sort();
 }
 

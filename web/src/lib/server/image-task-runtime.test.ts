@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     updateTask: vi.fn(),
     transitionTask: vi.fn(),
     schedule: vi.fn(),
+    nextVisualPoll: vi.fn(({ submittedAt }: { submittedAt: number }) => submittedAt + 30_000),
+    wakeAgent: vi.fn(),
     writeLog: vi.fn(),
     inlineResult: vi.fn(),
     directResult: vi.fn(),
@@ -42,7 +44,7 @@ vi.mock("@/app/api/image-tasks/image-task-support", () => ({
 vi.mock("@/app/api/image-tasks/image-task-runner", () => ({ stableMediaUrl: vi.fn((value: string) => (value && !value.startsWith("data:") ? value : "")), writeImageGenerationLog: mocks.writeLog }));
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getSettings, refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
-vi.mock("@/lib/server/generation-task-scheduler", () => ({ scheduleGenerationTask: mocks.schedule }));
+vi.mock("@/lib/server/generation-task-scheduler", () => ({ generationVisualTaskNextPollAt: mocks.nextVisualPoll, scheduleGenerationTask: mocks.schedule, wakeAgentGenerationTask: mocks.wakeAgent }));
 vi.mock("@/lib/server/generation-log-repository", () => ({ normalizeAssets: mocks.normalizeAssets, deleteLocalAsset: mocks.deleteAsset }));
 vi.mock("@/lib/server/image-task-store", () => ({
     getImageTask: mocks.getTask,
@@ -84,6 +86,7 @@ describe("image task runtime submission safety", () => {
         });
         mocks.deleteAsset.mockResolvedValue(undefined);
         mocks.register.mockResolvedValue(undefined);
+        mocks.wakeAgent.mockResolvedValue(null);
     });
 
     it("does not resubmit after a safe request rejection", async () => {
@@ -134,6 +137,8 @@ describe("image task runtime submission safety", () => {
         mocks.runCustom.mockResolvedValueOnce({ dataUrl: "", pending: { id: "yumeng-task", mediaBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer", pollBaseUrl: "https://zcbservice.aizfw.cn/kyyReactApiServer" } });
 
         await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "pending", upstream: { id: "yumeng-task" } });
+        const submittedSchedule = mocks.schedule.mock.calls.find(([, , patch]) => patch.executionPhase === "submitted")?.[2];
+        expect(submittedSchedule.nextPollAt - submittedSchedule.submittedAt).toBe(30_000);
         expect(mocks.runCustom).toHaveBeenCalledOnce();
         expect(mocks.runOpenAi).not.toHaveBeenCalled();
         expect(mocks.runGemini).not.toHaveBeenCalled();
@@ -217,7 +222,7 @@ describe("image task runtime submission safety", () => {
     });
 
     it("commits image success before writing the generation log", async () => {
-        state = { ...imageTask(), status: "running", result: { dataUrl: "data:image/png;base64,c2FmZQ==" } };
+        state = { ...imageTask(), status: "running", runId: "agent-one", result: { dataUrl: "data:image/png;base64,c2FmZQ==" } };
         mocks.writeLog.mockImplementationOnce(async () => {
             expect(state.status).toBe("success");
             return undefined;
@@ -225,6 +230,7 @@ describe("image task runtime submission safety", () => {
 
         await expect(persistImageTaskResult(state, "http://internal", "inline://image-task-result")).resolves.toMatchObject({ status: "success" });
         expect(mocks.writeLog).toHaveBeenCalledOnce();
+        expect(mocks.wakeAgent).toHaveBeenCalledWith("agent-one");
     });
 
     it("fails a corrupt synchronous image result before publishing it as ready", async () => {

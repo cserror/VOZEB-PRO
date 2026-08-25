@@ -951,6 +951,57 @@ describe("split Postgres repositories", () => {
         expect(params).toEqual(["user-one", 8]);
     });
 
+    it("paginates generation history by individual result slots", async () => {
+        const timestamp = "2026-08-24T08:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [
+                {
+                    log_id: "log-one",
+                    slot_id: "slot-two",
+                    asset_index: 1,
+                    kind: "image",
+                    source: "agent",
+                    result_status: "success",
+                    title: "商品主图",
+                    original_prompt: "生成商品主图",
+                    result_model: "image-pro",
+                    parameters: { size: "1:1" },
+                    conversation_id: "conversation-one",
+                    result_task_id: "task-two",
+                    duration_ms: 1200,
+                    created_at: timestamp,
+                    completed_at: timestamp,
+                    asset_type: "image",
+                    asset_url: "/api/generation-log-assets/permanent/two.webp",
+                    asset_server_url: "/api/generation-log-assets/permanent/two.webp",
+                    asset_mime_type: "image/webp",
+                    asset_width: 1024,
+                    asset_height: 1024,
+                    asset_bytes: 12,
+                    total_count: "25",
+                },
+            ],
+        ]);
+
+        const page = await createPostgresRepositories(executor).generationLogs.listResultPage({
+            userId: "user-one",
+            page: 2,
+            pageSize: 24,
+            kind: "image",
+            status: "success",
+            keyword: "商品",
+            startAt: "2026-08-01T00:00:00.000Z",
+            endAt: "2026-08-31T23:59:59.999Z",
+        });
+
+        expect(page).toMatchObject({ total: 25, page: 2, pageSize: 24, items: [expect.objectContaining({ logId: "log-one", slotId: "slot-two", assetIndex: 1, originalPrompt: "生成商品主图", parameters: { size: "1:1" } })] });
+        const [statement, params] = queryArgs(query, 0);
+        expect(String(statement)).toContain("jsonb_array_elements(log.result_slots)");
+        expect(String(statement)).toContain("count(*) OVER()");
+        expect(String(statement)).toContain("LIMIT $8 OFFSET $9");
+        expect(params).toEqual(["user-one", "image", "商品", "%商品%", "2026-08-01T00:00:00.000Z", "2026-08-31T23:59:59.999Z", "success", 24, 24]);
+    });
+
     it("pushes prompt filtering and pagination into PostgreSQL", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([

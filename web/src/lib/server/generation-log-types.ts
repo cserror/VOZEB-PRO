@@ -1,4 +1,4 @@
-import type { GenerationLogRequestSnapshot } from "@/lib/generation-log-snapshot";
+import type { GenerationLogRequestSnapshot, GenerationLogSnapshotParameters } from "@/lib/generation-log-snapshot";
 
 export type GenerationLogKind = "image" | "video";
 export type GenerationLogSource = "agent" | "image-workbench" | "video-workbench" | "canvas" | "drama" | "unknown";
@@ -69,6 +69,10 @@ export type GenerationTaskLogResultInput = {
     userId: string;
     username: string;
     displayName: string;
+    conversationId?: string;
+    runId?: string;
+    userPrompt?: string;
+    parameters?: GenerationLogSnapshotParameters;
     kind: GenerationLogKind;
     source: GenerationLogSource;
     status: "success" | "failed";

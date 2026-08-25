@@ -1,5 +1,7 @@
 import { ALL_PROMPTS_OPTION, type Prompt, type PromptListResponse } from "./prompts";
 
+type MyPromptInput = { title: string; prompt: string; category?: string; tags?: string[]; coverUrl?: string; preview?: string };
+
 export function listMyPrompts(input: { page: number; pageSize?: number; category?: string; keyword?: string; includeFacets?: boolean }) {
     const query = new URLSearchParams({
         page: String(input.page),
@@ -11,9 +13,17 @@ export function listMyPrompts(input: { page: number; pageSize?: number; category
     return request<PromptListResponse>(`/api/my-prompts?${query}`, { cache: "no-store" });
 }
 
-export function createMyPrompt(input: { title: string; prompt: string; category?: string; tags?: string[]; coverUrl?: string; preview?: string }) {
+export function createMyPrompt(input: MyPromptInput) {
     return request<{ prompt: Prompt }>("/api/my-prompts", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+    }).then((data) => data.prompt);
+}
+
+export function updateMyPrompt(id: string, input: MyPromptInput) {
+    return request<{ prompt: Prompt }>(`/api/my-prompts/${encodeURIComponent(id)}`, {
+        method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
     }).then((data) => data.prompt);

@@ -5,6 +5,8 @@ const mocks = vi.hoisted(() => ({
     release: vi.fn(),
     renew: vi.fn(),
     schedule: vi.fn(),
+    nextPoll: vi.fn(() => 20_000),
+    nextVisualPoll: vi.fn(() => 30_000),
     executeAgentRun: vi.fn(),
     processAgentRunReview: vi.fn(),
     getAgentRun: vi.fn(),
@@ -39,7 +41,8 @@ vi.mock("@/lib/server/generation-task-scheduler", () => ({
     releaseGenerationTaskLease: mocks.release,
     renewGenerationTaskLeases: mocks.renew,
     scheduleGenerationTask: mocks.schedule,
-    generationTaskNextPollAt: vi.fn(() => 20_000),
+    generationTaskNextPollAt: mocks.nextPoll,
+    generationVisualTaskNextPollAt: mocks.nextVisualPoll,
 }));
 vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.executeAgentRun }));
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
@@ -190,6 +193,7 @@ describe("generation task recovery service", () => {
         const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
 
         expect(mocks.queryVideoTaskUpstream).toHaveBeenCalledWith(task, "http://internal", "", task.userId);
+        expect(mocks.nextVisualPoll).toHaveBeenCalledOnce();
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
     });
@@ -422,6 +426,7 @@ describe("generation task recovery service", () => {
 
         expect(mocks.updateImageTask).toHaveBeenCalledWith(task.id, { upstream: restored.upstream });
         expect(mocks.queryImageTaskUpstreamStep).toHaveBeenCalledWith(restored, "http://internal", "", task.userId);
+        expect(mocks.nextVisualPoll).toHaveBeenCalledOnce();
         expect(mocks.createImageTaskUpstreamStep).not.toHaveBeenCalled();
         expect(result).toMatchObject({ claimed: 1, pending: 1, needsReview: 0 });
     });

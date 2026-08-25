@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { generationTaskNextPollAt, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease } from "@/lib/server/generation-task-scheduler";
+import { generationTaskNextPollAt, generationVisualTaskNextPollAt, claimDueGenerationTasks, releaseGenerationTaskLease, renewGenerationTaskLeases, scheduleGenerationTask, type GenerationTaskLease } from "@/lib/server/generation-task-scheduler";
 import { failVideoTaskFromWorker, persistVideoTaskResult, queryVideoTaskUpstream } from "@/lib/server/video-task-runtime";
 import { getVideoTask, type VideoTask } from "@/lib/server/video-task-store";
 import { createAudioTaskUpstreamStep, markAudioTaskFailed, persistAudioTaskResult, queryAudioTaskUpstreamStep } from "@/lib/server/audio-task-runtime";
@@ -537,7 +537,7 @@ async function processImageLease(lease: GenerationTaskLease, workerId: string, o
             provider: latest.config.advancedConfig?.protocol || latest.config.apiFormat,
             queryPath: latest.config.advancedConfig?.queryPath,
             submittedAt: lease.submittedAt || now,
-            nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt || now, now }),
+            nextPollAt: generationVisualTaskNextPollAt({ submittedAt: lease.submittedAt || now, now }),
             lastPollAt: latest.upstream?.id ? now : undefined,
             lastUpstreamStatus: step.status,
         });
@@ -824,7 +824,7 @@ async function processVideoLease(lease: GenerationTaskLease, workerId: string, o
             executionPhase: "polling",
             upstreamTaskId: task.upstream.id || lease.upstreamTaskId,
             queryPath: task.upstream.queryPath || task.config?.advancedConfig?.queryPath,
-            nextPollAt: generationTaskNextPollAt({ submittedAt: lease.submittedAt, now }),
+            nextPollAt: generationVisualTaskNextPollAt({ submittedAt: lease.submittedAt, now }),
             lastPollAt: now,
             lastUpstreamStatus: step.status,
         });

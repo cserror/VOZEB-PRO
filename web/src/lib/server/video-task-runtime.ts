@@ -14,6 +14,7 @@ import { maintenanceWorkerHeaders } from "@/lib/server/maintenance-auth";
 import { systemAiBillingHeaders } from "@/lib/server/system-ai-billing";
 import { refundVideoTask } from "@/lib/server/video-task-refund";
 import { geminiVideoQueryPath, parseGeminiVideoOperation } from "@/lib/server/gemini-video-provider";
+import { wakeAgentGenerationTask } from "@/lib/server/generation-task-scheduler";
 
 export type VideoUpstreamStep = { state: "pending"; status: string } | { state: "result_ready"; status: string; resultUrl: string } | { state: "failed"; status: string; error: string };
 
@@ -117,6 +118,7 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
     }
     await writeVideoGenerationLog(completed, "success");
     await registerVideoAsset(completed);
+    await wakeAgentGenerationTask(completed.runId).catch((wakeError) => console.error("Parent Agent wakeup failed after video completion", wakeError));
     return completed;
 }
 
@@ -127,6 +129,7 @@ async function failVideoTask(task: VideoTask, error: string, retryable = true) {
     if (failed) {
         await writeVideoGenerationLog({ ...failed, attempts }, "failed", error, retryable);
         if (task.status === "running") await refundVideoTask(failed);
+        await wakeAgentGenerationTask(failed.runId).catch((wakeError) => console.error("Parent Agent wakeup failed after video failure", wakeError));
     }
     return failed || getVideoTask(task.id);
 }

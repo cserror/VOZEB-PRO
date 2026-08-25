@@ -35,8 +35,8 @@ export function creativeRunPresentation(run: CreativeAgentRun | undefined, model
 }
 
 export function creativeRunDuration(run: CreativeAgentRun | undefined) {
-    const startedAt = Number(run?.createdAt);
-    const finishedAt = Number(run?.updatedAt);
+    const startedAt = Number(run?.timings?.requestAcceptedAt || run?.createdAt);
+    const finishedAt = Number(run?.timings?.runCompletedAt || run?.updatedAt);
     if (!Number.isFinite(startedAt) || !Number.isFinite(finishedAt) || finishedAt <= startedAt) return "";
     const totalSeconds = Math.max(1, Math.round((finishedAt - startedAt) / 1000));
     const hours = Math.floor(totalSeconds / 3600);
