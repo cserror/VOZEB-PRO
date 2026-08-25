@@ -49,6 +49,8 @@ test("generation history filters, previews, details, material actions, and curre
     }
 
     const cards = page.getByRole("article");
+    await expect(cards.first()).not.toContainText("已完成");
+    await expect(cards.nth(2)).not.toContainText("失败");
     const lefts = await cards.evaluateAll((elements) => elements.map((element) => Math.round(element.getBoundingClientRect().left)));
     const expectedColumns = viewportWidth < 768 ? 2 : viewportWidth < 1024 ? 3 : 4;
     expect(new Set(lefts).size).toBe(Math.min(expectedColumns, await cards.count()));

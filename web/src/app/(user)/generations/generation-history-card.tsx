@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Checkbox, Tag, Tooltip } from "antd";
+import { Button, Checkbox, Tooltip } from "antd";
 import { Check, Copy, Download, FolderPlus, Image as ImageIcon, Info, Pencil, Trash2, Video } from "lucide-react";
 
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
@@ -34,7 +34,6 @@ export function GenerationHistoryCard({
     const prompt = item.optimizedPrompt || item.originalPrompt;
     const assetUrl = item.asset?.serverUrl || item.asset?.url || "";
     const aspectRatio = item.asset?.width && item.asset?.height ? `${item.asset.width} / ${item.asset.height}` : item.kind === "video" ? "16 / 9" : "4 / 3";
-    const status = statusView(item.status);
     const busy = Boolean(busyAction);
     return (
         <article className={cn("group min-w-0 overflow-hidden rounded-lg border bg-card text-card-foreground transition", selected ? "border-primary ring-1 ring-primary/25" : "border-border hover:border-foreground/20 hover:shadow-sm")}>
@@ -49,7 +48,6 @@ export function GenerationHistoryCard({
                 <div className="absolute left-2 top-2 z-10" onClick={(event) => event.stopPropagation()}>
                     <Checkbox checked={selected} aria-label={`选择${item.title}`} onChange={(event) => onSelect(event.target.checked)} />
                 </div>
-                <Tag className={cn("!absolute !right-2 !top-2 !m-0 !border-0 !text-[11px]", status.className)}>{status.label}</Tag>
             </div>
 
             <div className="min-w-0 p-2.5">
@@ -92,12 +90,6 @@ export function GenerationHistoryCard({
             </div>
         </article>
     );
-}
-
-function statusView(status: GenerationHistoryItem["status"]) {
-    if (status === "pending") return { label: "生成中", className: "!bg-amber-100 !text-amber-800 dark:!bg-amber-950 dark:!text-amber-200" };
-    if (status === "failed") return { label: "失败", className: "!bg-rose-100 !text-rose-800 dark:!bg-rose-950 dark:!text-rose-200" };
-    return { label: "已完成", className: "!bg-emerald-100 !text-emerald-800 dark:!bg-emerald-950 dark:!text-emerald-200" };
 }
 
 function formatTime(value: string) {
