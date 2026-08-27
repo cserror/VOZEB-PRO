@@ -5,6 +5,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { getPublicUsersByIds } from "@/lib/auth/store";
 import { deleteGenerationLogs, listGenerationLogs } from "@/lib/server/generation-log-store";
+import { hydrateGenerationLogMedia } from "@/lib/server/generation-log-view";
 import { hasAdminPermission } from "@/lib/admin-permissions";
 
 export const runtime = "nodejs";
@@ -28,9 +29,9 @@ export async function GET(request: NextRequest) {
         end: params.get("end") || "",
     });
 
-    const users = await getPublicUsersByIds(result.items.map((item) => item.userId));
+    const [users, logs] = await Promise.all([getPublicUsersByIds(result.items.map((item) => item.userId)), hydrateGenerationLogMedia(result.items)]);
     const accountIdByUserId = new Map(users.map((user) => [user.id, user.accountId]));
-    return NextResponse.json({ logs: result.items.map((item) => ({ ...item, accountId: accountIdByUserId.get(item.userId) })), total: result.total, page: result.page, pageSize: result.pageSize });
+    return NextResponse.json({ logs: logs.map((item) => ({ ...item, accountId: accountIdByUserId.get(item.userId) })), total: result.total, page: result.page, pageSize: result.pageSize });
 }
 
 export async function DELETE(request: Request) {

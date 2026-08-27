@@ -3,7 +3,9 @@ import { applyCanvasProjectMutation } from "@/lib/canvas-project-mutation";
 import { summarizeCanvasProjectRecord } from "@/lib/canvas-project-summary";
 import { summarizeCanvasProject, type CreateOverviewMedia, type CreateOverviewProject } from "@/lib/create-workbench-overview";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
-import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, type QueryExecutor } from "@/lib/server/database";
+import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
+import { MediaReferenceWriteConflict, withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 
 type CanvasProjectRecord = { userId: string; project: CanvasProject };
 type CanvasProjectDatabase = { version: 1; projects: CanvasProjectRecord[] };
@@ -140,118 +142,130 @@ export async function getCanvasProject(id: string, userId: string) {
 }
 
 export async function createCanvasProject(userId: string, project: CanvasProject) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery(
-            `INSERT INTO canvas_projects (id, user_id, title, project_json, created_at, updated_at)
-             VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-            [project.id, userId, project.title, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
-        );
+    return withCanvasMediaReferenceWrite(userId, collectLocalMediaStorageKeys(project), async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            await ensurePostgresSchema();
+            await databaseQuery(executor)(
+                `INSERT INTO canvas_projects (id, user_id, title, project_json, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
+                [project.id, userId, project.title, JSON.stringify(project), new Date(project.createdAt), new Date(project.updatedAt)],
+            );
+            return project;
+        }
+        await mutateDatabase((db) => {
+            if (db.projects.some((record) => record.project.id === project.id)) throw new CanvasProjectStoreError("画布项目已存在", 409);
+            return { ...db, projects: [{ userId, project }, ...db.projects] };
+        });
         return project;
-    }
-    await mutateDatabase((db) => {
-        if (db.projects.some((record) => record.project.id === project.id)) throw new CanvasProjectStoreError("画布项目已存在", 409);
-        return { ...db, projects: [{ userId, project }, ...db.projects] };
     });
-    return project;
 }
 
 export async function updateCanvasProject(userId: string, project: CanvasProject, expectedUpdatedAt: string) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery(
-            `UPDATE canvas_projects SET title = $3, project_json = $4::jsonb, updated_at = $5
-             WHERE id = $1 AND user_id = $2 AND project_json->>'updatedAt' = $6
-             RETURNING id`,
-            [project.id, userId, project.title, JSON.stringify(project), new Date(project.updatedAt), expectedUpdatedAt],
-        );
-        if (!result.rows[0]) {
-            const existing = await getCanvasProject(project.id, userId);
-            throw new CanvasProjectStoreError(existing ? "画布项目已在其他页面更新，请刷新后重试" : "画布项目不存在", existing ? 409 : 404);
+    return withCanvasMediaReferenceWrite(userId, collectLocalMediaStorageKeys(project), async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            await ensurePostgresSchema();
+            const query = databaseQuery(executor);
+            const result = await query(
+                `UPDATE canvas_projects SET title = $3, project_json = $4::jsonb, updated_at = $5
+                 WHERE id = $1 AND user_id = $2 AND project_json->>'updatedAt' = $6
+                 RETURNING id`,
+                [project.id, userId, project.title, JSON.stringify(project), new Date(project.updatedAt), expectedUpdatedAt],
+            );
+            if (!result.rows[0]) {
+                const existing = await query<{ id: string }>("SELECT id FROM canvas_projects WHERE id = $1 AND user_id = $2", [project.id, userId]);
+                throw new CanvasProjectStoreError(existing.rows[0] ? "画布项目已在其他页面更新，请刷新后重试" : "画布项目不存在", existing.rows[0] ? 409 : 404);
+            }
+            return project;
         }
+        let found = false;
+        await mutateDatabase((db) => ({
+            ...db,
+            projects: db.projects.map((record) => {
+                if (record.userId !== userId || record.project.id !== project.id) return record;
+                found = true;
+                if (record.project.updatedAt !== expectedUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
+                return { ...record, project };
+            }),
+        }));
+        if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
         return project;
-    }
-    let found = false;
-    await mutateDatabase((db) => ({
-        ...db,
-        projects: db.projects.map((record) => {
-            if (record.userId !== userId || record.project.id !== project.id) return record;
-            found = true;
-            if (record.project.updatedAt !== expectedUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
-            return { ...record, project };
-        }),
-    }));
-    if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
-    return project;
+    });
 }
 
 export async function updateCanvasProjectMutation(userId: string, project: CanvasProject, expectedUpdatedAt: string, mutationId: string) {
     const storedProject = withMutationId(project, mutationId);
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery<{ project_json: StoredCanvasProject }>(
+    return withCanvasMediaReferenceWrite(userId, collectLocalMediaStorageKeys(project), async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            await ensurePostgresSchema();
+            const query = databaseQuery(executor);
+            const result = await query<{ project_json: StoredCanvasProject }>(
             `UPDATE canvas_projects SET title = $3, project_json = $4::jsonb, updated_at = $5
              WHERE id = $1 AND user_id = $2
                AND project_json->>'updatedAt' = $6
              RETURNING project_json`,
             [project.id, userId, project.title, JSON.stringify(storedProject), new Date(project.updatedAt), expectedUpdatedAt],
-        );
-        if (result.rows[0]) return toPublicProject(result.rows[0].project_json);
-        const existingResult = await postgresQuery<{ project_json: StoredCanvasProject }>("SELECT project_json FROM canvas_projects WHERE id = $1 AND user_id = $2", [project.id, userId]);
-        const existing = existingResult.rows[0]?.project_json;
-        if (existing?.__canvasLastMutationId === mutationId) return toPublicProject(existing);
-        throw new CanvasProjectStoreError(existing ? "画布项目已在其他页面更新，请刷新后重试" : "画布项目不存在", existing ? 409 : 404);
-    }
-    let found = false;
-    let saved: CanvasProject | null = null;
-    await mutateDatabase((db) => ({
-        ...db,
-        projects: db.projects.map((record) => {
-            if (record.userId !== userId || record.project.id !== project.id) return record;
-            found = true;
-            const current = record.project as StoredCanvasProject;
-            if (current.__canvasLastMutationId === mutationId) {
-                saved = toPublicProject(current);
-                return record;
-            }
-            if (current.updatedAt !== expectedUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
-            saved = project;
-            return { ...record, project: storedProject };
-        }),
-    }));
-    if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
-    return saved || project;
+            );
+            if (result.rows[0]) return toPublicProject(result.rows[0].project_json);
+            const existingResult = await query<{ project_json: StoredCanvasProject }>("SELECT project_json FROM canvas_projects WHERE id = $1 AND user_id = $2", [project.id, userId]);
+            const existing = existingResult.rows[0]?.project_json;
+            if (existing?.__canvasLastMutationId === mutationId) return toPublicProject(existing);
+            throw new CanvasProjectStoreError(existing ? "画布项目已在其他页面更新，请刷新后重试" : "画布项目不存在", existing ? 409 : 404);
+        }
+        let found = false;
+        let saved: CanvasProject | null = null;
+        await mutateDatabase((db) => ({
+            ...db,
+            projects: db.projects.map((record) => {
+                if (record.userId !== userId || record.project.id !== project.id) return record;
+                found = true;
+                const current = record.project as StoredCanvasProject;
+                if (current.__canvasLastMutationId === mutationId) {
+                    saved = toPublicProject(current);
+                    return record;
+                }
+                if (current.updatedAt !== expectedUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
+                saved = project;
+                return { ...record, project: storedProject };
+            }),
+        }));
+        if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
+        return saved || project;
+    });
 }
 
 /** Applies a compact client mutation without reading or rewriting the full PostgreSQL snapshot in Node. */
 export async function updateCanvasProjectMutationPatch(userId: string, projectId: string, mutation: CanvasProjectMutation): Promise<CanvasProjectSaveAck> {
-    if (getDatabaseProvider() === "postgres") return updatePostgresProjectMutation(userId, projectId, mutation);
+    const storageKeys = collectLocalMediaStorageKeys([mutation.nodeUpserts, mutation.chatSessionUpserts]);
+    return withCanvasMediaReferenceWrite(userId, storageKeys, async (executor) => {
+        if (getDatabaseProvider() === "postgres") return updatePostgresProjectMutation(userId, projectId, mutation, executor);
 
-    let found = false;
-    let ack: CanvasProjectSaveAck | null = null;
-    await mutateDatabase((db) => ({
-        ...db,
-        projects: db.projects.map((record) => {
-            if (record.userId !== userId || record.project.id !== projectId) return record;
-            found = true;
-            const current = record.project as StoredCanvasProject;
-            if (current.__canvasLastMutationId === mutation.mutationId) {
-                ack = { projectId, updatedAt: current.updatedAt, mutationId: mutation.mutationId };
-                return record;
-            }
-            if (current.updatedAt !== mutation.baseUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
-            const updatedAt = nextProjectVersion(current.updatedAt);
-            const next = applyCanvasProjectMutation(current, mutation, updatedAt);
-            ack = { projectId, updatedAt, mutationId: mutation.mutationId };
-            return { ...record, project: withMutationId(next, mutation.mutationId) };
-        }),
-    }));
-    if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
-    return ack || { projectId, updatedAt: mutation.baseUpdatedAt, mutationId: mutation.mutationId };
+        let found = false;
+        let ack: CanvasProjectSaveAck | null = null;
+        await mutateDatabase((db) => ({
+            ...db,
+            projects: db.projects.map((record) => {
+                if (record.userId !== userId || record.project.id !== projectId) return record;
+                found = true;
+                const current = record.project as StoredCanvasProject;
+                if (current.__canvasLastMutationId === mutation.mutationId) {
+                    ack = { projectId, updatedAt: current.updatedAt, mutationId: mutation.mutationId };
+                    return record;
+                }
+                if (current.updatedAt !== mutation.baseUpdatedAt) throw new CanvasProjectStoreError("画布项目已在其他页面更新，请刷新后重试", 409);
+                const updatedAt = nextProjectVersion(current.updatedAt);
+                const next = applyCanvasProjectMutation(current, mutation, updatedAt);
+                ack = { projectId, updatedAt, mutationId: mutation.mutationId };
+                return { ...record, project: withMutationId(next, mutation.mutationId) };
+            }),
+        }));
+        if (!found) throw new CanvasProjectStoreError("画布项目不存在", 404);
+        return ack || { projectId, updatedAt: mutation.baseUpdatedAt, mutationId: mutation.mutationId };
+    });
 }
 
-async function updatePostgresProjectMutation(userId: string, projectId: string, mutation: CanvasProjectMutation): Promise<CanvasProjectSaveAck> {
+async function updatePostgresProjectMutation(userId: string, projectId: string, mutation: CanvasProjectMutation, executor?: QueryExecutor): Promise<CanvasProjectSaveAck> {
     await ensurePostgresSchema();
+    const query = databaseQuery(executor);
     const values: unknown[] = [projectId, userId, mutation.mutationId, mutation.baseUpdatedAt];
     let projectExpression = "p.project_json";
     let titleExpression = "p.title";
@@ -289,7 +303,7 @@ async function updatePostgresProjectMutation(userId: string, projectId: string, 
     projectExpression = `jsonb_set(${projectExpression}, '{__canvasLastMutationId}', to_jsonb($${mutationIndex}::text), true)`;
     projectExpression = `jsonb_set(${projectExpression}, '{updatedAt}', to_jsonb(to_char(v.now AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')), true)`;
 
-    const result = await postgresQuery<{ id: string; updated_at: Date | string }>(
+    const result = await query<{ id: string; updated_at: Date | string }>(
         `WITH versioned AS (SELECT clock_timestamp() AS now)
          UPDATE canvas_projects AS p
          SET title = ${titleExpression}, project_json = ${projectExpression}, updated_at = v.now
@@ -302,7 +316,7 @@ async function updatePostgresProjectMutation(userId: string, projectId: string, 
     );
     if (result.rows[0]) return { projectId, updatedAt: toIsoDate(result.rows[0].updated_at), mutationId: mutation.mutationId };
 
-    const existing = await postgresQuery<{ updated_at: Date | string; last_mutation_id: string | null }>("SELECT updated_at, project_json->>'__canvasLastMutationId' AS last_mutation_id FROM canvas_projects WHERE id = $1 AND user_id = $2", [
+    const existing = await query<{ updated_at: Date | string; last_mutation_id: string | null }>("SELECT updated_at, project_json->>'__canvasLastMutationId' AS last_mutation_id FROM canvas_projects WHERE id = $1 AND user_id = $2", [
         projectId,
         userId,
     ]);
@@ -419,6 +433,19 @@ function toIsoDate(value: unknown) {
 function nextProjectVersion(current: string) {
     const previous = Date.parse(current);
     return new Date(Math.max(Date.now(), Number.isFinite(previous) ? previous + 1 : 0)).toISOString();
+}
+
+function databaseQuery(executor?: QueryExecutor): QueryExecutor["query"] {
+    return executor ? executor.query.bind(executor) : postgresQuery;
+}
+
+async function withCanvasMediaReferenceWrite<T>(userId: string, storageKeys: string[], write: (executor?: QueryExecutor) => Promise<T>) {
+    try {
+        return await withActiveMediaReferenceWrite(storageKeys, { ownerUserId: userId }, write);
+    } catch (error) {
+        if (error instanceof MediaReferenceWriteConflict) throw new CanvasProjectStoreError(error.message, error.status);
+        throw error;
+    }
 }
 
 export class CanvasProjectStoreError extends Error {

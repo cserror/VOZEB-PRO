@@ -1,7 +1,7 @@
 import type { PublishedGalleryItemRecord } from "@/lib/server/database";
 import { userAvatarUrl } from "@/lib/user-avatar";
 
-export function publicGalleryItem(item: PublishedGalleryItemRecord) {
+export function publicGalleryItem(item: PublishedGalleryItemRecord, previewUrl?: string) {
     const profileAuthor = item.authorDisplay === "profile";
     return {
         slug: item.slug,
@@ -24,7 +24,7 @@ export function publicGalleryItem(item: PublishedGalleryItemRecord) {
                       id: item.assetId,
                       mediaType: item.assetMediaType,
                       mimeType: item.assetMimeType || "",
-                      url: `/api/public/works/${encodeURIComponent(item.slug)}/media/${encodeURIComponent(item.assetId)}`,
+                      url: previewUrl || `/api/public/works/${encodeURIComponent(item.slug)}/media/${encodeURIComponent(item.assetId)}`,
                   }
                 : undefined,
     };

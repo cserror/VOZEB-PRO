@@ -217,6 +217,32 @@ describe("creative runtime file provider", () => {
         expect((mocks.files.get("creative-runtime.json") as { assets: unknown[] }).assets).toHaveLength(1);
     });
 
+    it("rejects a managed Agent asset after media deletion has been claimed", async () => {
+        const storageKey = "permanent/agent/pending.png";
+        mocks.files.set("local-media-assets.json", {
+            version: 1,
+            assets: [{ storageKey, scope: "generation", storageClass: "permanent", type: "image", ownerUserId: "user", source: "agent", mimeType: "image/png", bytes: 1024, deletionStatus: "pending", createdAt: "2026-08-27T00:00:00.000Z" }],
+        });
+
+        await expect(
+            registerCreativeAssets([
+                {
+                    userId: "user",
+                    conversationId: "conversation",
+                    sourceRunId: "run-one",
+                    sourceTaskId: "child-pending",
+                    ordinal: 0,
+                    type: "image",
+                    title: "待删除结果",
+                    storageKind: "object",
+                    storageKey,
+                    serverUrl: `/api/generation-log-assets/${storageKey}`,
+                },
+            ]),
+        ).rejects.toThrow("媒体正在删除或已不可用");
+        expect((mocks.files.get("creative-runtime.json") as { assets?: unknown[] } | undefined)?.assets || []).toHaveLength(0);
+    });
+
     it("rejects foreign assets and immutable conversation scope changes", async () => {
         const foreign = await registerCreativeAssets([
             {

@@ -203,11 +203,12 @@ export function AssistantHistory({
 export function AssistantReferenceChip({ item, label, onRemove }: { item: CanvasAssistantReference; label?: string; onRemove?: () => void }) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const text = (item.text || item.title).replace(/\s+/g, " ").trim().slice(0, 1) || "文";
+    const displayUrl = item.thumbnailUrl || item.displayUrl || item.dataUrl;
     return (
         <div className="group/chip relative inline-flex h-8 max-w-[150px] shrink-0 items-center gap-1.5 rounded-lg text-sm" style={{ color: theme.node.text }}>
-            {item.dataUrl ? (
+            {displayUrl ? (
                 <span className="relative block size-8 shrink-0">
-                    <img src={imagePreviewUrl(item.dataUrl, 96)} alt="" className="size-8 rounded-lg object-cover" />
+                    <img src={imagePreviewUrl(displayUrl, 96)} alt="" className="size-8 rounded-lg object-cover" />
                     {label ? <span className="absolute left-0.5 top-0.5 rounded bg-black/60 px-1 py-0.5 text-[8px] font-medium leading-none text-white">{label}</span> : null}
                 </span>
             ) : (
@@ -237,7 +238,10 @@ export function assistantImageReferenceLabel(references: CanvasAssistantReferenc
 }
 
 export function assistantMessageToChatMessage(message: CanvasAssistantMessage): CanvasAgentChatMessage {
-    const attachments = message.references?.flatMap((item) => (item.dataUrl ? [{ id: item.id, name: item.title, url: item.dataUrl, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const) }] : []));
+    const attachments = message.references?.flatMap((item) => {
+        const url = item.thumbnailUrl || item.displayUrl || item.dataUrl;
+        return url ? [{ id: item.id, name: item.title, url, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const) }] : [];
+    });
     return {
         id: message.id,
         role: message.role,
@@ -252,7 +256,15 @@ export function assistantMessageToChatMessage(message: CanvasAssistantMessage): 
 export function nodeToReference(node: CanvasNodeData): CanvasAssistantReference | null {
     const mediaUrl = [node.metadata?.content, node.metadata?.serverUrl, node.metadata?.remoteUrl].find((value): value is string => typeof value === "string" && Boolean(value.trim()));
     if ((isCanvasImageNodeType(node.type) || node.type === CanvasNodeType.Video) && mediaUrl) {
-        return { id: node.id, type: node.type, title: node.title, dataUrl: mediaUrl, storageKey: node.metadata?.storageKey };
+        return {
+            id: node.id,
+            type: node.type,
+            title: node.title,
+            dataUrl: mediaUrl,
+            displayUrl: node.metadata?.displayUrl,
+            thumbnailUrl: node.metadata?.thumbnailUrl,
+            storageKey: node.metadata?.storageKey,
+        };
     }
     if (node.type === CanvasNodeType.Text && node.metadata?.content) {
         return { id: node.id, type: node.type, title: node.title, text: node.metadata.content };

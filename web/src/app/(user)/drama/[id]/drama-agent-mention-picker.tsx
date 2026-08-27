@@ -3,6 +3,7 @@
 import { Clapperboard, FileText, KeyRound, MapPinned, Package, Play, UserRound } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
 import { dramaAgentMentionKindLabel, type DramaAgentMentionItem, type DramaAgentMentionKind } from "./drama-agent-mention";
@@ -74,7 +75,7 @@ function MentionMediaPreview({ item }: { item: DramaAgentMentionItem }) {
     }
     return (
         <span className="relative size-6 shrink-0 overflow-hidden rounded bg-black" data-drama-agent-mention-media="video">
-            <video src={item.preview.url} muted playsInline preload="metadata" aria-hidden="true" className="size-full object-cover" />
+            <LazyMediaVideo src={item.preview.url} muted playsInline preload="metadata" aria-hidden="true" className="size-full object-cover" />
             <span className="pointer-events-none absolute inset-0 grid place-items-center bg-black/20 text-white">
                 <Play className="size-2.5 fill-current" aria-hidden="true" />
             </span>

@@ -7,14 +7,17 @@ import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, media
 import { resolveServerDataPath } from "@/lib/server/data-dir";
 import { getDatabaseProvider } from "@/lib/server/database";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
+import { claimLocalMediaDeletions } from "@/lib/server/media-deletion-claim";
 import {
     deleteLocalMediaRegistrations,
     getLocalMediaRegistration,
     getLocalMediaRegistrations,
     getLocalMediaRegistrationSummary,
+    listPendingLocalMediaDeletions,
     listExpiredLocalMediaRegistrations,
     listFileLocalMediaRegistrations,
     listLocalMediaRegistrationPage,
+    recordLocalMediaDeletionFailure,
     type LocalMediaRegistration,
 } from "@/lib/server/local-media-registry";
 import { deleteExternalMediaObject } from "@/lib/server/object-storage-service";
@@ -102,19 +105,28 @@ export async function cleanupExpiredLocalMediaAssets(limit?: number) {
         deletedFiles: registeredResult.deletedFiles + legacyResult.deletedFiles,
         deletedBytes: registeredResult.deletedBytes + legacyResult.deletedBytes,
         blocked: [...registeredResult.blocked, ...legacyResult.blocked],
+        pending: registeredResult.pending,
     };
 }
 
 export async function deleteLocalMediaAssets(ids: string[]) {
-    let deletedFiles = 0;
-    let deletedBytes = 0;
-    const blocked: Array<{ id: string; storageKey: string; referenceCount: number }> = [];
     const targets = Array.from(new Set(ids.map((value) => value.trim()).filter(Boolean)))
         .map((id) => ({ id, target: decodeMediaId(id) }))
         .filter((item): item is { id: string; target: { scope: "generation" | "reference"; relativePath: string } } => Boolean(item.target));
-    const references = await countLocalMediaReferences(targets.map((item) => item.target.relativePath));
-    const deletedKeys: string[] = [];
-    for (const { id, target } of targets) {
+    const registrations = await getLocalMediaRegistrations(targets.map((item) => item.target.relativePath));
+    const registrationByKey = new Map(registrations.map((registration) => [registration.storageKey, registration]));
+    const registeredResult = await deleteRegisteredMediaAssets(
+        targets.flatMap(({ target }) => {
+            const registration = registrationByKey.get(target.relativePath);
+            return registration?.scope === target.scope ? [registration] : [];
+        }),
+    );
+    const legacyTargets = targets.filter(({ target }) => !registrationByKey.has(target.relativePath));
+    const references = await countLocalMediaReferences(legacyTargets.map((item) => item.target.relativePath));
+    let deletedFiles = 0;
+    let deletedBytes = 0;
+    const blocked: Array<{ id: string; storageKey: string; referenceCount: number }> = [];
+    for (const { id, target } of legacyTargets) {
         const referenceCount = references.get(target.relativePath) || 0;
         if (referenceCount) {
             blocked.push({ id, storageKey: target.relativePath, referenceCount });
@@ -126,12 +138,15 @@ export async function deleteLocalMediaAssets(ids: string[]) {
         const info = await stat(/*turbopackIgnore: true*/ filePath).catch(() => null);
         if (!info?.isFile()) continue;
         await unlink(/*turbopackIgnore: true*/ filePath);
-        deletedKeys.push(target.relativePath);
         deletedFiles += 1;
         deletedBytes += info.size;
     }
-    await deleteLocalMediaRegistrations(deletedKeys);
-    return { deletedFiles, deletedBytes, blocked };
+    return {
+        deletedFiles: registeredResult.deletedFiles + deletedFiles,
+        deletedBytes: registeredResult.deletedBytes + deletedBytes,
+        blocked: [...registeredResult.blocked, ...blocked],
+        pending: registeredResult.pending,
+    };
 }
 
 export async function deleteUserLocalMediaAssets(userId: string, storageKeys: string[]) {
@@ -143,6 +158,10 @@ export async function deleteRegisteredLocalMediaSnapshots(registrations: LocalMe
     return deleteRegisteredMediaAssets(registrations);
 }
 
+export async function retryPendingLocalMediaDeletions(limit = 100) {
+    return deleteRegisteredMediaAssets(await listPendingLocalMediaDeletions(limit));
+}
+
 export async function deleteLocalMediaAssetsByStorageKeys(storageKeys: string[], scope?: "generation" | "reference") {
     const normalizedKeys = Array.from(new Set(storageKeys.map((key) => key.trim()).filter(Boolean)));
     const registrations = await getLocalMediaRegistrations(normalizedKeys);
@@ -152,38 +171,47 @@ export async function deleteLocalMediaAssetsByStorageKeys(storageKeys: string[],
     const legacyIds = scope ? normalizedKeys.filter((key) => !registeredKeys.has(key)).map((key) => encodeMediaId(scope, key)) : [];
     if (!legacyIds.length) return result;
     const legacy = await deleteLocalMediaAssets(legacyIds);
-    return { deletedFiles: result.deletedFiles + legacy.deletedFiles, deletedBytes: result.deletedBytes + legacy.deletedBytes, blocked: [...result.blocked, ...legacy.blocked] };
+    return { deletedFiles: result.deletedFiles + legacy.deletedFiles, deletedBytes: result.deletedBytes + legacy.deletedBytes, blocked: [...result.blocked, ...legacy.blocked], pending: result.pending };
 }
 
 async function deleteRegisteredMediaAssets(registrations: LocalMediaRegistration[]) {
-    const unique = Array.from(new Map(registrations.map((item) => [item.storageKey, item])).values());
-    const references = await countLocalMediaReferences(unique.map((item) => item.storageKey));
-    const blocked: Array<{ id: string; storageKey: string; referenceCount: number }> = [];
-    const deletedKeys: string[] = [];
-    let deletedFiles = 0;
-    let deletedBytes = 0;
-    for (const registration of unique) {
-        const referenceCount = references.get(registration.storageKey) || 0;
-        if (referenceCount) {
-            blocked.push({ id: encodeMediaId(registration.scope, registration.storageKey), storageKey: registration.storageKey, referenceCount });
+    const { deletable, blocked } = await claimLocalMediaDeletions(registrations);
+    const pending: Array<{ id: string; storageKey: string }> = [];
+    const physicallyDeleted: LocalMediaRegistration[] = [];
+    for (const registration of deletable) {
+        try {
+            if (registration.storageProvider === "object") {
+                if (!(await deleteExternalMediaObject(registration))) throw new Error("对象存储登记不完整");
+            } else {
+                const root = registration.scope === "generation" ? GENERATION_MEDIA_ROOT : REFERENCE_MEDIA_ROOT;
+                const filePath = safePath(root, registration.storageKey);
+                if (!filePath) throw new Error("媒体文件路径不合法");
+                await unlink(/*turbopackIgnore: true*/ filePath).catch((error: NodeJS.ErrnoException) => {
+                    if (error.code !== "ENOENT") throw error;
+                });
+            }
+        } catch (error) {
+            await recordLocalMediaDeletionFailure(registration.storageKey, error);
+            pending.push({ id: encodeMediaId(registration.scope, registration.storageKey), storageKey: registration.storageKey });
             continue;
         }
-        if (registration.storageProvider === "object") {
-            if (!(await deleteExternalMediaObject(registration))) continue;
-        } else {
-            const root = registration.scope === "generation" ? GENERATION_MEDIA_ROOT : REFERENCE_MEDIA_ROOT;
-            const filePath = safePath(root, registration.storageKey);
-            if (!filePath) continue;
-            const info = await stat(/*turbopackIgnore: true*/ filePath).catch(() => null);
-            if (!info?.isFile()) continue;
-            await unlink(/*turbopackIgnore: true*/ filePath);
-        }
-        deletedKeys.push(registration.storageKey);
-        deletedFiles += 1;
-        deletedBytes += registration.bytes;
+        physicallyDeleted.push(registration);
     }
-    await deleteLocalMediaRegistrations(deletedKeys);
-    return { deletedFiles, deletedBytes, blocked };
+    if (physicallyDeleted.length) {
+        try {
+            await deleteLocalMediaRegistrations(physicallyDeleted.map((item) => item.storageKey));
+        } catch (error) {
+            await Promise.all(physicallyDeleted.map((item) => recordLocalMediaDeletionFailure(item.storageKey, error)));
+            pending.push(...physicallyDeleted.map((item) => ({ id: encodeMediaId(item.scope, item.storageKey), storageKey: item.storageKey })));
+            return { deletedFiles: 0, deletedBytes: 0, blocked, pending };
+        }
+    }
+    return {
+        deletedFiles: physicallyDeleted.length,
+        deletedBytes: physicallyDeleted.reduce((total, item) => total + item.bytes, 0),
+        blocked,
+        pending,
+    };
 }
 
 async function scanGenerationMedia() {
@@ -248,6 +276,10 @@ function registrationMetadata(registration: Awaited<ReturnType<typeof getLocalMe
         mimeType: registration.mimeType,
         createdAt: registration.createdAt,
         expiresAt: registration.expiresAt,
+        deletionStatus: registration.deletionStatus,
+        deletionRequestedAt: registration.deletionRequestedAt,
+        deletionAttempts: registration.deletionAttempts,
+        deletionLastError: registration.deletionLastError,
     };
 }
 
@@ -276,6 +308,10 @@ function localMediaAssetFromRegistration(registration: LocalMediaRegistration): 
         projectId: registration.projectId,
         mimeType: registration.mimeType,
         referenceCount: 0,
+        deletionStatus: registration.deletionStatus,
+        deletionRequestedAt: registration.deletionRequestedAt,
+        deletionAttempts: registration.deletionAttempts,
+        deletionLastError: registration.deletionLastError,
     };
 }
 

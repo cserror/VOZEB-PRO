@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     getCurrentUser: vi.fn(),
     verify: vi.fn(),
     expired: vi.fn(),
+    pendingDeletion: vi.fn(),
     registration: vi.fn(),
     read: vi.fn(),
     isValidPath: vi.fn(),
@@ -19,7 +20,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/server/reference-asset-access", () => ({ verifyReferenceAssetSignature: mocks.verify }));
-vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistration: mocks.registration, isLocalMediaRegistrationExpired: mocks.expired }));
+vi.mock("@/lib/server/local-media-registry", () => ({
+    getLocalMediaRegistration: mocks.registration,
+    isLocalMediaPendingDeletion: mocks.pendingDeletion,
+    isLocalMediaRegistrationExpired: mocks.expired,
+}));
 vi.mock("@/lib/server/reference-asset-store", () => ({ isReferenceAssetPath: mocks.isValidPath, readReferenceAsset: mocks.read }));
 vi.mock("@/lib/server/local-media-response", () => ({
     createLocalMediaResponse: mocks.stream,
@@ -43,6 +48,7 @@ describe("reference asset access", () => {
         mocks.stream.mockResolvedValue(new Response("image"));
         mocks.registration.mockResolvedValue({ ownerUserId: "owner", mimeType: "image/png" });
         mocks.expired.mockReturnValue(false);
+        mocks.pendingDeletion.mockImplementation((registration) => registration?.deletionStatus === "pending");
         mocks.disposition.mockReturnValue('inline; filename="file.png"');
         mocks.rate.mockResolvedValue({ allowed: true, remaining: 239, resetAt: Date.now() + 60_000 });
         mocks.externalRead.mockResolvedValue("https://storage.example/signed");
@@ -56,6 +62,29 @@ describe("reference asset access", () => {
         const response = await GET(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png"), context);
         expect(response.status).toBe(404);
         expect(mocks.read).not.toHaveBeenCalled();
+    });
+
+    it("hides a pending deletion from authenticated and provider reads", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
+        mocks.registration.mockResolvedValue({ ownerUserId: "owner", mimeType: "image/png", deletionStatus: "pending" });
+
+        expect((await GET(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png"), context)).status).toBe(404);
+
+        mocks.verify.mockReturnValue(true);
+        mocks.getCurrentUser.mockResolvedValue(null);
+        expect((await GET(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png?purpose=provider-read&expires=1&signature=test"), context)).status).toBe(404);
+        expect(mocks.externalRead).not.toHaveBeenCalled();
+        expect(mocks.stream).not.toHaveBeenCalled();
+    });
+
+    it("hides a pending deletion from HEAD requests", async () => {
+        mocks.getCurrentUser.mockResolvedValue({ id: "owner", role: "user" });
+        mocks.registration.mockResolvedValue({ ownerUserId: "owner", mimeType: "image/png", bytes: 5, storageProvider: "object", deletionStatus: "pending" });
+
+        const response = await HEAD(new Request("http://localhost/api/reference-assets/permanent/2026/07/20/images/file.png", { method: "HEAD" }), context);
+
+        expect(response.status).toBe(404);
+        expect(mocks.head).not.toHaveBeenCalled();
     });
 
     it("rejects malformed paths without querying authentication or media registrations", async () => {

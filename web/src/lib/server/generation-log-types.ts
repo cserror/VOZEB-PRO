@@ -6,13 +6,20 @@ export type GenerationLogStatus = "pending" | "success" | "failed";
 
 export type GenerationLogAsset = {
     type: GenerationLogKind;
-    url: string;
-    remoteUrl?: string;
-    serverUrl?: string;
+    storageKey: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     mimeType?: string;
     width?: number;
     height?: number;
     bytes?: number;
+};
+
+export type GenerationLogAssetInput = Partial<GenerationLogAsset> & {
+    url?: string;
+    remoteUrl?: string;
+    serverUrl?: string;
+    targetSize?: string;
 };
 
 export type StoredGenerationLog = {
@@ -56,7 +63,7 @@ export type GenerationLogInput = Partial<Pick<StoredGenerationLog, "id" | "taskI
     count?: number;
     successCount?: number;
     failCount?: number;
-    assets?: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>;
+    assets?: GenerationLogAssetInput[];
     createdAt?: string | number;
     completedAt?: string | number;
 };
@@ -81,8 +88,8 @@ export type GenerationTaskLogResultInput = {
     model: string;
     summary: string;
     durationMs: number;
-    asset?: Partial<GenerationLogAsset> & { url?: string; targetSize?: string };
-    assets?: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>;
+    asset?: GenerationLogAssetInput;
+    assets?: GenerationLogAssetInput[];
     error?: string;
     canRetry?: boolean;
     taskKind?: "generation" | "edit";

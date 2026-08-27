@@ -23,6 +23,7 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { createSignedReferenceAssetUrl, signReferenceAssetInputUrl } from "@/lib/server/reference-asset-access";
 import { assertCapabilityConstraints } from "@/lib/server/capability-constraints";
 import { checkGenerationRateLimit, rateLimitHeaders } from "@/lib/server/security";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -193,20 +194,26 @@ export async function POST(request: Request) {
         if (config.outputMode === "layers" && (kind !== "edit" || references.length !== 1)) {
             return NextResponse.json({ error: "电商分层需要且只能使用一张源图" }, { status: 400 });
         }
-        const task = await createImageTask({
-            ...(resolvedBody.context || {}),
-            userId: currentUser.id,
-            username: currentUser.username,
-            displayName: currentUser.displayName,
-            kind,
-            source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
-            title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
-            config,
-            candidateConfigs: compatibleConfigs.slice(1),
-            prompt,
-            references,
-            mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
-        });
+        let task: ImageTask;
+        try {
+            task = await createImageTask({
+                ...(resolvedBody.context || {}),
+                userId: currentUser.id,
+                username: currentUser.username,
+                displayName: currentUser.displayName,
+                kind,
+                source: isGenerationSource(resolvedBody.source) ? resolvedBody.source : "image-workbench",
+                title: typeof resolvedBody.title === "string" ? resolvedBody.title : "",
+                config,
+                candidateConfigs: compatibleConfigs.slice(1),
+                prompt,
+                references,
+                mask: resolvedBody.mask?.dataUrl || resolvedBody.mask?.url || resolvedBody.mask?.remoteUrl || resolvedBody.mask?.serverUrl ? resolvedBody.mask : undefined,
+            });
+        } catch (error) {
+            if (error instanceof MediaReferenceWriteConflict) return NextResponse.json({ error: error.message }, { status: error.status });
+            throw error;
+        }
         await linkStoredGenerationTask("image", task.id, resolvedBody.context || {});
         const cookie = request.headers.get("cookie") || "";
         const origin = resolveInternalOrigin(new URL(request.url).origin);

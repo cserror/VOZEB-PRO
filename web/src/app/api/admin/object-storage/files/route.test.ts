@@ -24,7 +24,7 @@ describe("GET /api/admin/object-storage/files", () => {
         mocks.getCurrentUser.mockResolvedValue({ id: "admin", role: "admin", status: "active", adminPermissions: ["system.manage"] });
         mocks.listExternalStorageFiles.mockResolvedValue({ items: [{ key: "media/image.webp", ownerUserId: "user-one" }], bucket: "media", prefix: "vozeb-pro/" });
         mocks.getPublicUsersByIds.mockResolvedValue([{ id: "user-one", accountId: "0001", username: "creator", displayName: "创作者" }]);
-        mocks.deleteExternalStorageFiles.mockResolvedValue({ deleted: 1, blocked: [] });
+        mocks.deleteExternalStorageFiles.mockResolvedValue({ deleted: 1, blocked: [], pending: [] });
     });
 
     it("audits destructive object deletion", async () => {
@@ -38,7 +38,23 @@ describe("GET /api/admin/object-storage/files", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.deleteExternalStorageFiles).toHaveBeenCalledWith(["media/image.webp"]);
-        expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.object-storage.files.delete", metadata: { requested: 1, deleted: 1, blocked: 0 } }));
+        expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.object-storage.files.delete", metadata: { requested: 1, deleted: 1, blocked: 0, pending: 0 } }));
+    });
+
+    it("reports and audits managed objects that remain pending", async () => {
+        mocks.deleteExternalStorageFiles.mockResolvedValueOnce({ deleted: 0, blocked: [], pending: [{ key: "media/image.webp", storageKey: "permanent/image.webp" }] });
+
+        const response = await DELETE(
+            new Request("http://localhost/api/admin/object-storage/files", {
+                method: "DELETE",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ keys: ["media/image.webp"] }),
+            }),
+        );
+        const payload = await response.json();
+
+        expect(payload.msg).toBe("部分对象删除失败，已进入维护重试");
+        expect(mocks.audit).toHaveBeenCalledWith(expect.objectContaining({ metadata: { requested: 1, deleted: 0, blocked: 0, pending: 1 } }));
     });
 
     it("requires an administrator", async () => {

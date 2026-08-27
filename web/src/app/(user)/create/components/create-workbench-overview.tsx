@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
-import { browserReadableMediaUrl } from "@/lib/browser-media-url";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import type { CreateOverviewAsset, CreateOverviewMedia, CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
@@ -150,7 +150,7 @@ function CanvasProjectCover({ previews }: { previews: CreateOverviewMedia[] }) {
     return preview.kind === "image" ? (
         <img src={imagePreviewUrl(preview.url, 960)} alt="" loading="lazy" className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
     ) : (
-        <video src={browserReadableMediaUrl(preview.url)} muted preload="metadata" playsInline className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
+        <LazyMediaVideo src={preview.url} muted preload="metadata" playsInline className={mediaClass} onError={() => setPreviewIndex((index) => index + 1)} />
     );
 }
 
@@ -158,7 +158,7 @@ function RecentAssetCard({ asset, importing, onUse }: { asset: CreateOverviewAss
     return (
         <div className="group min-w-0 overflow-hidden rounded-lg border border-[#e2e7eb] bg-white transition hover:border-[#cbd2d9] hover:shadow-[0_8px_20px_rgba(32,36,42,0.08)] dark:border-[#2b3037] dark:bg-[#181b20] dark:hover:border-[#3b424c] dark:hover:shadow-black/25">
             <div className="relative overflow-hidden bg-[#eef1f4] dark:bg-[#252a31]">
-                <AgentMediaPreview type={asset.kind} url={browserReadableMediaUrl(asset.url)} title={asset.title} className="aspect-[4/3] max-h-52" />
+                <AgentMediaPreview type={asset.kind} url={asset.displayUrl} thumbnailUrl={asset.thumbnailUrl} previewUrl={asset.displayUrl} title={asset.title} className="aspect-[4/3] max-h-52" defer />
                 <span className="pointer-events-none absolute left-2 top-2 inline-flex size-7 items-center justify-center rounded-lg bg-black/55 text-white backdrop-blur-sm" aria-hidden="true">
                     {asset.kind === "image" ? <FileImage className="size-3.5" /> : <Video className="size-3.5" />}
                 </span>

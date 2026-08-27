@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { getPublicAvatarStorageKey } from "@/lib/auth/store";
 import { getServerDataDir } from "@/lib/server/data-dir";
-import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { getLocalMediaRegistration, isLocalMediaPendingDeletion } from "@/lib/server/local-media-registry";
 import { createLocalMediaResponse, createMediaHeadResponse, mediaContentDisposition } from "@/lib/server/local-media-response";
 import { acquireMediaConcurrency, withMediaConcurrency } from "@/lib/server/media-concurrency";
 import { createExternalMediaReadUrl } from "@/lib/server/object-storage-service";
@@ -32,7 +32,8 @@ async function serveAvatar(request: Request, context: Context) {
     const storageKey = await getPublicAvatarStorageKey(userId);
     if (!storageKey) return notFound();
     const registration = await getLocalMediaRegistration(storageKey);
-    if (!registration || registration.ownerUserId !== userId || registration.source !== "profile-avatar" || registration.storageClass !== "permanent" || registration.mimeType !== "image/webp") return notFound();
+    if (!registration || isLocalMediaPendingDeletion(registration) || registration.ownerUserId !== userId || registration.source !== "profile-avatar" || registration.storageClass !== "permanent" || registration.mimeType !== "image/webp")
+        return notFound();
 
     const headers = {
         "Cache-Control": "public, max-age=300, stale-while-revalidate=3600",

@@ -13,6 +13,7 @@ import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
 import { SiteLogo } from "@/components/layout/site-logo";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { useCreativeAgentModels } from "@/hooks/use-creative-agent-options";
+import { creativeAssetDisplayUrl, creativeAssetStableUrl, creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import { isCreativeProjectHandoff, type CreativeAsset, type CreativeMessage, type CreativeProjectHandoff } from "@/lib/creative-runtime-contract";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import { imagePreviewUrl } from "@/lib/media-image-url";
@@ -232,7 +233,7 @@ function CreativeMediaRound({
     const displayContent = assistantMessage.status === "failed" ? friendlyAgentError(assistantMessage.content) : formatAgentMessageText(assistantMessage.content);
     const handoff = isCreativeProjectHandoff(assistantMessage.metadata.projectHandoff) ? assistantMessage.metadata.projectHandoff : null;
     const failedTasks = run?.tasks.filter((task) => task.status === "failed") || [];
-    const mediaOutputs = outputAssets.filter((asset) => asset.type !== "text" && assetUrl(asset));
+    const mediaOutputs = outputAssets.filter((asset) => asset.type !== "text" && creativeAssetDisplayUrl(asset));
     const videoOutputs = mediaOutputs.filter((asset) => asset.type === "video");
     const otherMediaOutputs = mediaOutputs.filter((asset) => asset.type !== "video");
     const textOutputs = outputAssets.filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim());
@@ -332,7 +333,7 @@ function CreativeRoundReferenceStrip({ assets }: { assets: CreativeAsset[] }) {
     return (
         <div className="hide-scrollbar mb-2 ml-auto flex max-w-[176px] justify-end gap-1.5 overflow-x-auto pb-0.5" aria-label="本轮参考素材">
             {assets.map((asset) => {
-                const url = assetUrl(asset);
+                const url = creativeAssetDisplayUrl(asset);
                 if (!url || asset.type === "text") return null;
                 const label = asset.type === "image" ? imageReferenceLabel(imageIndex++) : asset.type === "video" ? "视频" : "音频";
                 return (
@@ -341,7 +342,7 @@ function CreativeRoundReferenceStrip({ assets }: { assets: CreativeAsset[] }) {
                         className="relative grid size-14 shrink-0 place-items-center overflow-hidden rounded-md border border-[#dde2e7] bg-[#eef1f4] text-[#697582] dark:border-[#3b424b] dark:bg-[#252a31] dark:text-[#aab2bc]"
                         title={asset.title}
                     >
-                        {asset.type === "image" ? <img src={imagePreviewUrl(url, 192)} alt={asset.title || "参考图"} loading="lazy" className="size-full object-cover" /> : null}
+                        {asset.type === "image" ? <img src={imagePreviewUrl(creativeAssetThumbnailUrl(asset), 192)} alt={asset.title || "参考图"} loading="lazy" className="size-full object-cover" /> : null}
                         {asset.type === "video" ? <Film className="size-5" aria-hidden /> : null}
                         {asset.type === "audio" ? <FileAudio2 className="size-5" aria-hidden /> : null}
                         <span className="absolute left-1 top-1 rounded-sm bg-black/68 px-1 py-0.5 text-[9px] font-medium leading-none text-white">{label}</span>
@@ -671,7 +672,7 @@ function CreativeAssetResults({
     const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
     const copyText = useCopyText();
     const textAssets = assets.filter((asset) => asset.type === "text" && asset.status === "ready" && asset.textContent?.trim());
-    const media = assets.filter((asset) => asset.type !== "text" && assetUrl(asset));
+    const media = assets.filter((asset) => asset.type !== "text" && creativeAssetDisplayUrl(asset));
     const updateDimensions = useCallback((id: string, width: number, height: number) => {
         if (width <= 0 || height <= 0) return;
         setLoadedDimensions((current) => (current[id]?.width === width && current[id]?.height === height ? current : { ...current, [id]: { width, height } }));
@@ -692,7 +693,7 @@ function CreativeAssetResults({
             {media.length ? (
                 <div className={cn("flex max-w-full flex-wrap items-start gap-2 sm:gap-3", contained ? "w-fit" : "mt-3 w-full max-w-[1040px] sm:mt-4", media.length > 1 && "max-w-[420px]")}>
                     {media.map((asset) => {
-                        const url = assetUrl(asset)!;
+                        const url = creativeAssetDisplayUrl(asset);
                         const selected = selectedAssetIds.includes(asset.id);
                         const featured = media.length === 1 && (asset.type === "image" || asset.type === "video");
                         const layout = creativeAssetLayout(loadedDimensions[asset.id] || asset, { variant: featured ? (asset.type === "video" ? "video-result" : "image-result") : "compact" });
@@ -767,13 +768,9 @@ function CreativeAssetResults({
     );
 }
 
-function assetUrl(asset: CreativeAsset) {
-    return asset.serverUrl || asset.remoteUrl || "";
-}
-
 function agentAssetDownloads(assets: CreativeAsset[]): AgentMediaDownload[] {
     return assets.flatMap((asset) => {
-        const url = assetUrl(asset);
+        const url = creativeAssetStableUrl(asset);
         return url && (asset.type === "image" || asset.type === "video") ? [{ type: asset.type, url, title: asset.title || (asset.type === "video" ? "生成视频" : "生成图片"), mimeType: asset.mimeType }] : [];
     });
 }
@@ -781,7 +778,7 @@ function agentAssetDownloads(assets: CreativeAsset[]): AgentMediaDownload[] {
 function agentAssetDownload(asset: CreativeAsset): AgentMediaDownload {
     return {
         type: asset.type === "video" ? "video" : "image",
-        url: assetUrl(asset)!,
+        url: creativeAssetStableUrl(asset),
         title: asset.title || (asset.type === "video" ? "生成视频" : "生成图片"),
         mimeType: asset.mimeType,
     };

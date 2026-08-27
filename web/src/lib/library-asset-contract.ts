@@ -5,6 +5,8 @@ type AssetBase<T extends AssetKind> = {
     kind: T;
     title: string;
     coverUrl: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     tags: string[];
     source?: string;
     note?: string;

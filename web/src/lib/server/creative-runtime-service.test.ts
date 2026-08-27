@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
     getCreativeConversation: vi.fn(),
     getCreativeConversationsByIds: vi.fn(),
+    listCreativeAssets: vi.fn(),
     registerCreativeAssets: vi.fn(),
+    resolveMediaDisplayUrls: vi.fn(),
     writePersistentMediaDataUrl: vi.fn(),
     deleteCreativeConversationAggregates: vi.fn(),
     deleteUserMediaAssetsCascade: vi.fn(),
@@ -14,7 +16,7 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
     getCreativeAsset: vi.fn(),
     getCreativeConversation: mocks.getCreativeConversation,
     getCreativeConversationsByIds: mocks.getCreativeConversationsByIds,
-    listCreativeAssets: vi.fn(),
+    listCreativeAssets: mocks.listCreativeAssets,
     listCreativeConversations: vi.fn(),
     listCreativeMessages: vi.fn(),
     registerCreativeAssets: mocks.registerCreativeAssets,
@@ -23,8 +25,9 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({
 vi.mock("@/lib/server/reference-asset-store", () => ({ writePersistentMediaDataUrl: mocks.writePersistentMediaDataUrl }));
 vi.mock("@/lib/server/creative-entity-deletion-store", () => ({ deleteCreativeConversationAggregates: mocks.deleteCreativeConversationAggregates }));
 vi.mock("@/lib/server/user-media-deletion-service", () => ({ deleteUserMediaAssetsCascade: mocks.deleteUserMediaAssetsCascade }));
+vi.mock("@/lib/server/media-display-url", () => ({ resolveMediaDisplayUrls: mocks.resolveMediaDisplayUrls }));
 
-import { deleteConversationsForUser, registerGenerationTaskAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
+import { deleteConversationsForUser, listAssetsForUser, registerGenerationTaskAssetsForUser, uploadAssetForUser } from "./creative-runtime-service";
 
 function file(name: string, type: string, size = 4): File {
     return { name, type, size, arrayBuffer: async () => new Uint8Array(Math.min(size, 4)).buffer } as File;
@@ -34,6 +37,8 @@ describe("创作会话素材上传", () => {
     beforeEach(() => {
         mocks.getCreativeConversation.mockReset().mockResolvedValue({ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" });
         mocks.getCreativeConversationsByIds.mockReset().mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "chat", status: "active" }]);
+        mocks.listCreativeAssets.mockReset().mockResolvedValue([]);
+        mocks.resolveMediaDisplayUrls.mockReset().mockResolvedValue(new Map());
         mocks.writePersistentMediaDataUrl.mockReset().mockResolvedValue({ token: "persistent-one.mp4", storage: "local", bytes: 4, mimeType: "video/mp4" });
         mocks.deleteCreativeConversationAggregates.mockReset().mockResolvedValue({ deletedConversations: 1, deletedProjects: 0, mediaStorageKeys: ["permanent/one.png"] });
         mocks.deleteUserMediaAssetsCascade.mockReset().mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
@@ -95,5 +100,66 @@ describe("创作会话素材上传", () => {
 
         expect(assets[0]).toMatchObject({ type: "image", serverUrl: "/api/generation-log-assets/user/file.png", storageKind: "local" });
         expect(mocks.registerCreativeAssets).toHaveBeenCalledWith([expect.objectContaining({ conversationId: "conversation-one", sourceRunId: "run-one", sourceTaskId: "task-one", metadata: { surface: "chat", projectId: undefined } })]);
+    });
+
+    it("preserves explicit object storage identity for generated Agent media", async () => {
+        const [asset] = await registerGenerationTaskAssetsForUser("user-one", {
+            conversationId: "conversation-one",
+            runId: "run-one",
+            surface: "chat",
+            taskId: "task-one",
+            title: "商品主图",
+            assets: [
+                {
+                    type: "image",
+                    url: "/api/generation-log-assets/permanent/result.png",
+                    storageKey: "permanent/result.png",
+                    storageKind: "object",
+                    mimeType: "image/png",
+                },
+            ],
+        });
+
+        expect(asset).toMatchObject({ storageKind: "object", storageKey: "permanent/result.png", serverUrl: "/api/generation-log-assets/permanent/result.png" });
+    });
+
+    it("adds CDN display urls without replacing the stable server url", async () => {
+        mocks.listCreativeAssets.mockResolvedValue([
+            {
+                id: "asset-one",
+                userId: "user-one",
+                conversationId: "conversation-one",
+                ordinal: 0,
+                type: "image",
+                status: "ready",
+                title: "商品主图",
+                storageKind: "object",
+                storageKey: "permanent/result.png",
+                serverUrl: "/api/generation-log-assets/permanent/result.png",
+                metadata: {},
+                createdAt: 1,
+                updatedAt: 1,
+            },
+        ]);
+        mocks.resolveMediaDisplayUrls.mockResolvedValue(
+            new Map([
+                [
+                    "permanent/result.png",
+                    {
+                        displayUrl: "https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png",
+                        thumbnailUrl: "https://img-test.paisi.art/cdn-cgi/image/width=640/result.png",
+                    },
+                ],
+            ]),
+        );
+
+        const [asset] = await listAssetsForUser("user-one", "conversation-one");
+
+        expect(asset).toMatchObject({
+            serverUrl: "/api/generation-log-assets/permanent/result.png",
+            displayUrl: "https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png",
+            thumbnailUrl: "https://img-test.paisi.art/cdn-cgi/image/width=640/result.png",
+        });
+        expect(mocks.resolveMediaDisplayUrls).toHaveBeenCalledWith(["permanent/result.png"], { thumbnailWidth: 640 });
     });
 });

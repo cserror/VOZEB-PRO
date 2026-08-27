@@ -2,6 +2,7 @@
 
 import { AudioLines, Copy, Download, FileText, Film, ImageIcon, PencilLine, Share2, Trash2 } from "lucide-react";
 import { Button, Image, Modal, Space, Tag, Tooltip, Typography } from "antd";
+import { LazyMediaImage } from "@/components/media/lazy-media-image";
 import { formatBytes } from "@/lib/image-utils";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
@@ -31,7 +32,12 @@ export function AssetCard({
         <article className="group min-w-0 overflow-hidden rounded-xl border border-border bg-card transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-foreground/30">
             <button type="button" aria-label={`查看 ${asset.title}`} className="relative block w-full overflow-hidden bg-muted text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" onClick={onOpen}>
                 {cover ? (
-                    <img src={imagePreviewUrl(cover, 800)} alt={asset.title} className="aspect-[16/10] w-full object-cover transition-transform duration-300 group-hover:scale-[1.025]" />
+                    <LazyMediaImage
+                        src={asset.thumbnailUrl || imagePreviewUrl(cover, 640)}
+                        alt={asset.title}
+                        containerClassName="aspect-[16/10] w-full min-h-0"
+                        imageClassName="size-full object-cover transition-transform duration-300 group-hover:scale-[1.025]"
+                    />
                 ) : (
                     <span className="flex aspect-[16/10] flex-col items-center justify-center gap-2 p-4 text-center text-xs leading-5 text-muted-foreground sm:p-6">
                         <span className="grid size-9 place-items-center rounded-full border border-border bg-background/80 text-foreground">{assetKindIcon(asset.kind)}</span>
@@ -95,7 +101,7 @@ export function AssetPreviewModal({ asset, onClose, onCopy, onDownload }: { asse
             {asset ? (
                 <div className="max-h-[72vh] space-y-4 overflow-y-auto pr-1">
                     {cover ? (
-                        <Image src={imagePreviewUrl(cover, 960)} alt={asset.title} className="rounded-lg" preview={{ src: imagePreviewUrl(cover, 1920) }} />
+                        <Image src={asset.displayUrl || imagePreviewUrl(cover, 1280)} alt={asset.title} className="rounded-lg" preview={{ src: asset.displayUrl || imagePreviewUrl(cover, 1920) }} />
                     ) : (
                         <div className="rounded-lg border border-stone-200 bg-stone-50 p-5 text-sm leading-6 text-stone-600 dark:border-stone-800 dark:bg-stone-900 dark:text-stone-300">{asset.kind === "text" ? asset.data.content : "暂无封面"}</div>
                     )}

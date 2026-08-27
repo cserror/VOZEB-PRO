@@ -4,6 +4,7 @@ import { createPostgresRepositories, ensurePostgresSchema, getDatabaseProvider, 
 import type { PublishedGalleryItemRecord, PublishedWorkCaseRecord, PublishedWorkCaseStatus, PublishedWorkCaseType } from "@/lib/server/database";
 import type { GalleryCursor, GallerySort } from "@/lib/server/database/work-governance-repository";
 import { publicGalleryItem } from "@/lib/server/public-work-view";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
 
 export class WorkGovernanceServiceError extends Error {
     constructor(
@@ -30,7 +31,11 @@ export async function listPublicGallery(input: { limit?: number; sort?: unknown;
         randomSeed,
         after,
     });
-    const items = result.items.map(publicGalleryItem);
+    const displayUrls = await resolveMediaDisplayUrls(
+        result.items.flatMap((item) => (item.assetStorageKey ? [item.assetStorageKey] : [])),
+        { thumbnailWidth: 640 },
+    );
+    const items = result.items.map((item) => publicGalleryItem(item, item.assetStorageKey ? displayUrls.get(item.assetStorageKey)?.thumbnailUrl || displayUrls.get(item.assetStorageKey)?.displayUrl : undefined));
     const last = result.items.at(-1);
     return { items, nextCursor: result.hasMore && last ? encodeCursor(last, sort, randomSeed) : undefined };
 }

@@ -263,9 +263,7 @@ export function mapGenerationLog(row: Record<string, unknown>): GenerationLogRec
 export function mapGenerationLogAsset(row: Record<string, unknown>): GenerationLogAssetRecord {
     return {
         type: row.type === "video" ? "video" : "image",
-        url: stringValue(row.url),
-        remoteUrl: optionalString(row.remote_url),
-        serverUrl: optionalString(row.server_url),
+        storageKey: stringValue(row.storage_key),
         mimeType: optionalString(row.mime_type),
         width: optionalNumber(row.width),
         height: optionalNumber(row.height),

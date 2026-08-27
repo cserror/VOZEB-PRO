@@ -249,6 +249,41 @@ describe("CreativeMessages", () => {
         expect(markup).not.toContain("aspect-square");
     });
 
+    it("uses CDN display urls for generated media while retaining the stable server url on the asset", () => {
+        const message: CreativeMessage = {
+            id: "message-cdn",
+            conversationId: "conversation-one",
+            sequence: 1,
+            role: "assistant",
+            status: "completed",
+            content: "图片已生成。",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        const asset: CreativeAsset & { displayUrl: string; thumbnailUrl: string } = {
+            id: "asset-cdn",
+            userId: "user-one",
+            conversationId: "conversation-one",
+            messageId: message.id,
+            ordinal: 0,
+            type: "image",
+            status: "ready",
+            title: "CDN 图片",
+            serverUrl: "/api/generation-log-assets/permanent/result.png",
+            displayUrl: "https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png",
+            thumbnailUrl: "https://img-test.paisi.art/cdn-cgi/image/width=640/result.png",
+            metadata: {},
+            createdAt: 1,
+            updatedAt: 1,
+        };
+
+        const markup = renderMessages(message, [asset]);
+
+        expect(markup).toContain("https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png");
+        expect(markup).not.toContain('src="/api/generation-log-assets/permanent/result.png');
+    });
+
     it("keeps every media result in a compact wrapping group", () => {
         const message: CreativeMessage = {
             id: "message-many",

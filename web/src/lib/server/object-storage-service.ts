@@ -6,19 +6,33 @@ import sharp from "sharp";
 import { classifyManagedMediaType, isManagedMediaType, isMediaSourceGroup, mediaSourceGroup } from "@/lib/media-management-contract";
 import { normalizeImagePreviewWidth } from "@/lib/media-image-variant";
 import type { ExternalStorageFilesPayload, ObjectStorageDeleteResult, ObjectStorageMigrationResult, ObjectStoragePreviewCleanupResult } from "@/lib/object-storage-contract";
+import { cloudflareImageUrl, imageVariantObjectKey, publicObjectUrl } from "@/lib/object-storage-public-url";
 import { resolveServerDataPath } from "@/lib/server/data-dir";
+import type { QueryExecutor } from "@/lib/server/database";
 import { countLocalMediaReferences } from "@/lib/server/local-media-references";
+import { claimLocalMediaDeletions } from "@/lib/server/media-deletion-claim";
 import { runImageVariantTaskOnce } from "@/lib/server/media-image-variant-cache";
 import { mediaContentDisposition, requestedImageVariant } from "@/lib/server/local-media-response";
-import { deleteLocalMediaRegistrations, listLocalMediaMigrationRegistrations, listMediaRegistrationsByExternalObjectKeys, registerLocalMediaAsset, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import {
+    deleteLocalMediaRegistrations,
+    getLocalMediaRegistrations,
+    isLocalMediaPendingDeletion,
+    listLocalMediaMigrationRegistrations,
+    listMediaRegistrationsByExternalObjectKeys,
+    recordLocalMediaDeletionFailure,
+    registerLocalMediaAsset,
+    type LocalMediaRegistration,
+} from "@/lib/server/local-media-registry";
 import { deleteObjects, getObjectBytes, listObjects, objectExists, objectStorageErrorMessage, putObjectBytes, putObjectFile, signObjectRead, testObjectStorageConnection } from "@/lib/server/object-storage-client";
 import { assertObjectStorageConfigured, getObjectStorageRuntimeConfig, type ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
+import { withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 
 const MAX_INPUT_PIXELS = 100_000_000;
 const PREVIEW_MARKER = ".vozeb-preview";
 const IMAGE_PREVIEW_READ_URL_TTL_SECONDS = 120;
 const IMAGE_ORIGINAL_READ_URL_TTL_SECONDS = 600;
 const STREAMING_MEDIA_READ_URL_TTL_SECONDS = 3600;
+const PUBLIC_MEDIA_CACHE_CONTROL = "public, max-age=300, s-maxage=3600, stale-while-revalidate=60";
 
 type ExternalMediaWriteInput = {
     registration: Omit<LocalMediaRegistration, "createdAt" | "storageProvider" | "externalStorageId" | "externalObjectKey" | "externalSyncedAt"> & { createdAt?: string };
@@ -26,39 +40,45 @@ type ExternalMediaWriteInput = {
     filePath?: string;
 };
 
-export async function persistExternalMediaIfEnabled(input: ExternalMediaWriteInput) {
+export async function persistExternalMediaIfEnabled(input: ExternalMediaWriteInput, options: { executor?: QueryExecutor } = {}) {
     const config = await getObjectStorageRuntimeConfig();
     if (!config.enabled) return null;
     assertObjectStorageConfigured(config);
-    const objectKey = mediaObjectKey(config, input.registration.scope, input.registration.storageKey);
+    const objectKey = mediaObjectKey(config, input.registration);
+    const uploadedKeys = [objectKey];
     try {
         await uploadMedia(config, objectKey, input);
     } catch (error) {
+        await deleteObjects(config, uploadedKeys).catch(() => undefined);
         throw new Error(`外部存储上传失败：${objectStorageErrorMessage(error)}`, { cause: error });
     }
     const syncedAt = new Date().toISOString();
     try {
-        return await registerLocalMediaAsset({
+        const registration = {
             ...input.registration,
             storageProvider: "object",
             externalStorageId: config.id,
             externalObjectKey: objectKey,
             externalSyncedAt: syncedAt,
-        });
+        } as const;
+        return options.executor ? await registerLocalMediaAsset(registration, { executor: options.executor }) : await registerLocalMediaAsset(registration);
     } catch (error) {
-        await deleteObjects(config, [objectKey]).catch(() => undefined);
+        await deleteObjects(config, uploadedKeys).catch(() => undefined);
         throw error;
     }
 }
 
 export async function createExternalMediaReadUrl(request: Request, registration: LocalMediaRegistration) {
     if (registration.storageProvider !== "object" || !registration.externalObjectKey) return null;
+    if (isLocalMediaPendingDeletion(registration)) return null;
     if (registration.expiresAt && Date.parse(registration.expiresAt) <= Date.now()) return null;
     const config = await getObjectStorageRuntimeConfig();
     assertRegistrationConfig(config, registration);
+    const cloudflareDelivery = config.imageDeliveryProvider === "cloudflare" && Boolean(config.publicBaseUrl) && registration.storageClass === "permanent";
     const variant = requestedImageVariant(request, registration.mimeType);
-    if (variant) return createObjectImagePreviewReadUrl(config, registration.externalObjectKey, variant.width, registration.storageKey);
+    if (variant) return cloudflareDelivery ? cloudflareImageUrl(config.publicBaseUrl, registration.externalObjectKey, variant.width) : createObjectImagePreviewReadUrl(config, registration.externalObjectKey, variant.width, registration.storageKey);
     const download = new URL(request.url).searchParams.get("download") === "original";
+    if (!download && cloudflareDelivery) return registration.type === "image" ? cloudflareImageUrl(config.publicBaseUrl, registration.externalObjectKey, 1280) : publicObjectUrl(config.publicBaseUrl, registration.externalObjectKey);
     return signObjectRead(config, {
         key: registration.externalObjectKey,
         contentType: registration.mimeType || undefined,
@@ -72,6 +92,7 @@ export async function createExternalStorageImagePreviewUrl(objectKey: string, wi
     assertObjectStorageConfigured(config);
     const key = objectKey.trim().replace(/\\/g, "/");
     if (!key.startsWith(`${config.prefix}/`) || isPreviewVariantKey(key) || classifyManagedMediaType({ name: key }) !== "image") return null;
+    if (config.imageDeliveryProvider === "cloudflare" && config.publicBaseUrl) return cloudflareImageUrl(config.publicBaseUrl, key, width);
     return createObjectImagePreviewReadUrl(config, key, normalizeImagePreviewWidth(width), key);
 }
 
@@ -121,6 +142,10 @@ export async function listExternalStorageFiles(input: { prefix?: string; cursor?
                     ownerUserId: registration?.ownerUserId,
                     source: registration?.source,
                     referenceCount: registration ? references.get(registration.storageKey) || 0 : 0,
+                    deletionStatus: registration?.deletionStatus,
+                    deletionRequestedAt: registration?.deletionRequestedAt,
+                    deletionAttempts: registration?.deletionAttempts,
+                    deletionLastError: registration?.deletionLastError,
                     previewUrl: itemType === "image" ? adminObjectImagePreviewUrl(item.key) : signedPreviewUrl,
                     downloadUrl,
                     variant: false,
@@ -136,12 +161,12 @@ export async function listExternalStorageFiles(input: { prefix?: string; cursor?
 }
 
 async function createObjectImagePreviewReadUrl(config: ObjectStorageRuntimeConfig, objectKey: string, width: number, fileName: string) {
-    const key = `${objectKey}${PREVIEW_MARKER}/webp-${width}.webp`;
+    const key = imageVariantObjectKey(objectKey, width);
     await runImageVariantTaskOnce(`object:${config.id}:${key}`, async () => {
         if (await objectExists(config, key)) return;
         const source = await getObjectBytes(config, objectKey);
         const bytes = await sharp(source, { limitInputPixels: MAX_INPUT_PIXELS, failOn: "error" }).rotate().resize({ width, withoutEnlargement: true, fit: "inside" }).webp({ quality: 82, effort: 4 }).toBuffer();
-        await putObjectBytes(config, { key, bytes, contentType: "image/webp" });
+        await putObjectBytes(config, { key, bytes, contentType: "image/webp", cacheControl: PUBLIC_MEDIA_CACHE_CONTROL });
     });
     return signObjectRead(config, {
         key,
@@ -163,25 +188,38 @@ export async function deleteExternalStorageFiles(keys: string[]): Promise<Object
     const normalizedKeys = Array.from(new Set(keys.map((key) => key.trim()).filter((key) => key.startsWith(basePrefix) && !isPreviewVariantKey(key))));
     const registrations = await listMediaRegistrationsByExternalObjectKeys(normalizedKeys);
     const registrationByKey = new Map(registrations.flatMap((item) => (item.externalObjectKey ? [[item.externalObjectKey, item] as const] : [])));
-    const references = await countLocalMediaReferences(registrations.map((item) => item.storageKey));
+    const claim = await claimLocalMediaDeletions(registrations);
+    const blockedByStorageKey = new Map(claim.blocked.map((item) => [item.storageKey, item]));
+    const deletableStorageKeys = new Set(claim.deletable.map((item) => item.storageKey));
     const blocked: ObjectStorageDeleteResult["blocked"] = [];
-    const deletable: string[] = [];
-    const registrationKeys: string[] = [];
+    const pending: ObjectStorageDeleteResult["pending"] = [];
+    const unregistered: string[] = [];
+    let deleted = 0;
 
     for (const key of normalizedKeys) {
         const registration = registrationByKey.get(key);
-        const referenceCount = registration ? references.get(registration.storageKey) || 0 : 0;
-        if (registration && referenceCount) {
-            blocked.push({ key, storageKey: registration.storageKey, referenceCount });
+        const blockedRegistration = registration ? blockedByStorageKey.get(registration.storageKey) : undefined;
+        if (registration && blockedRegistration) {
+            blocked.push({ key, storageKey: registration.storageKey, referenceCount: blockedRegistration.referenceCount });
             continue;
         }
-        deletable.push(key);
-        if (registration) registrationKeys.push(registration.storageKey);
-        deletable.push(...(await listAllKeys(config, `${key}${PREVIEW_MARKER}/`)));
+        if (!registration) {
+            unregistered.push(key, ...(await listAllKeys(config, `${key}${PREVIEW_MARKER}/`)));
+            deleted += 1;
+            continue;
+        }
+        if (!deletableStorageKeys.has(registration.storageKey)) continue;
+        try {
+            await deleteObjects(config, [key, ...(await listAllKeys(config, `${key}${PREVIEW_MARKER}/`))]);
+            await deleteLocalMediaRegistrations([registration.storageKey]);
+            deleted += 1;
+        } catch (error) {
+            await recordLocalMediaDeletionFailure(registration.storageKey, error);
+            pending.push({ key, storageKey: registration.storageKey });
+        }
     }
-    await deleteObjects(config, deletable);
-    await deleteLocalMediaRegistrations(registrationKeys);
-    return { deleted: normalizedKeys.length - blocked.length, blocked };
+    if (unregistered.length) await deleteObjects(config, unregistered);
+    return { deleted, blocked, pending };
 }
 
 export async function cleanupNestedExternalStoragePreviews(): Promise<ObjectStoragePreviewCleanupResult> {
@@ -261,14 +299,36 @@ export async function migrateLocalMediaToObjectStorage(limit = 20): Promise<Obje
 
     for (const item of batch) {
         try {
-            const migrated = await persistExternalMediaIfEnabled({ registration: { ...item.registration, bytes: item.bytes }, filePath: item.filePath });
-            if (!migrated) throw new Error("外部存储未启用");
-            try {
-                await unlink(item.filePath);
-            } catch (error) {
-                await registerLocalMediaAsset({ ...item.registration, storageProvider: "local", externalStorageId: undefined, externalObjectKey: undefined, externalSyncedAt: undefined });
-                await deleteExternalMediaObject(migrated).catch(() => undefined);
-                throw error;
+            const migrated = await withActiveMediaReferenceWrite([item.registration.storageKey], { ownerUserId: item.registration.ownerUserId }, async (executor) => {
+                const current = (
+                    await getLocalMediaRegistrations([item.registration.storageKey], {
+                        ownerUserId: item.registration.ownerUserId,
+                        executor,
+                        forUpdate: Boolean(executor),
+                    })
+                )[0];
+                if (!current || current.storageProvider === "object") return null;
+                const external = await persistExternalMediaIfEnabled({ registration: { ...current, bytes: item.bytes }, filePath: item.filePath }, { executor });
+                if (!external) throw new Error("外部存储未启用");
+                try {
+                    await unlink(item.filePath);
+                } catch (unlinkError) {
+                    try {
+                        await deleteExternalMediaObject(external);
+                    } catch (cleanupError) {
+                        console.error("Local media migration kept object registration because rollback cleanup failed", cleanupError);
+                        return external;
+                    }
+                    if (!executor) {
+                        await registerLocalMediaAsset({ ...current, storageProvider: "local", externalStorageId: undefined, externalObjectKey: undefined, externalSyncedAt: undefined });
+                    }
+                    throw unlinkError;
+                }
+                return external;
+            });
+            if (!migrated) {
+                result.skipped += 1;
+                continue;
             }
             result.migrated += 1;
         } catch (error) {
@@ -280,18 +340,25 @@ export async function migrateLocalMediaToObjectStorage(limit = 20): Promise<Obje
     return result;
 }
 
-function mediaObjectKey(config: ObjectStorageRuntimeConfig, scope: LocalMediaRegistration["scope"], storageKey: string) {
-    return `${config.prefix}/media/${scope}/${storageKey.replace(/^\/+/, "")}`;
+function mediaObjectKey(config: ObjectStorageRuntimeConfig, registration: ExternalMediaWriteInput["registration"]) {
+    const mediaDirectory = registration.type === "image" ? "images" : registration.type === "video" ? "videos" : "audio";
+    const segments = registration.storageKey
+        .replace(/\\/g, "/")
+        .split("/")
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .filter((segment, index) => !(index === 0 && segment === registration.storageClass) && segment !== mediaDirectory);
+    return [config.prefix, mediaDirectory, registration.scope, registration.storageClass, ...segments].filter(Boolean).join("/");
 }
 
 async function uploadMedia(config: ObjectStorageRuntimeConfig, objectKey: string, input: ExternalMediaWriteInput) {
     const metadata = { "storage-key": encodeURIComponent(input.registration.storageKey).slice(0, 1800), scope: input.registration.scope };
     if (input.bytes) {
-        await putObjectBytes(config, { key: objectKey, bytes: input.bytes, contentType: input.registration.mimeType, metadata });
+        await putObjectBytes(config, { key: objectKey, bytes: input.bytes, contentType: input.registration.mimeType, metadata, cacheControl: PUBLIC_MEDIA_CACHE_CONTROL });
         return;
     }
     if (!input.filePath) throw new Error("媒体写入缺少文件内容");
-    await putObjectFile(config, { key: objectKey, filePath: input.filePath, bytes: input.registration.bytes, contentType: input.registration.mimeType, metadata });
+    await putObjectFile(config, { key: objectKey, filePath: input.filePath, bytes: input.registration.bytes, contentType: input.registration.mimeType, metadata, cacheControl: PUBLIC_MEDIA_CACHE_CONTROL });
 }
 
 function assertRegistrationConfig(config: ObjectStorageRuntimeConfig, registration: LocalMediaRegistration) {

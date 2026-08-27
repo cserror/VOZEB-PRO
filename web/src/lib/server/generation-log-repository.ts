@@ -10,10 +10,11 @@ import { normalizeGeneratedImageBytes } from "@/lib/server/generated-image-norma
 import { resolveMediaMimeType } from "@/lib/server/media-content-type";
 import { createDatedMediaPath, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteLocalMediaRegistrations, getLocalMediaRegistration, registerLocalMediaAsset } from "@/lib/server/local-media-registry";
+import { localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
 import { deleteExternalMediaObject, persistExternalMediaIfEnabled } from "@/lib/server/object-storage-service";
 import { fetchSafeOutbound } from "@/lib/server/safe-outbound-fetch";
 import { isSafeOutboundUrl } from "@/lib/server/security";
-import type { GenerationLogAsset, GenerationLogDatabase, GenerationLogKind, GenerationLogSource, GenerationLogStatus, StoredGenerationLog } from "./generation-log-types";
+import type { GenerationLogAsset, GenerationLogAssetInput, GenerationLogDatabase, GenerationLogKind, GenerationLogSource, GenerationLogStatus, StoredGenerationLog } from "./generation-log-types";
 
 const LOG_DATA_FILE = "generation-logs.json";
 const ASSET_ROOT = GENERATION_MEDIA_ROOT;
@@ -50,7 +51,7 @@ export function isGenerationStatus(value?: string): value is GenerationLogStatus
 
 type GenerationAssetContext = { ownerUserId: string; source: string; conversationId?: string; taskId?: string; originalName?: string; targetSize?: string; assetIndex?: number; assetCount?: number };
 
-export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> & { url?: string; targetSize?: string }>, context: GenerationAssetContext) {
+export async function normalizeAssets(assets: GenerationLogAssetInput[], context: GenerationAssetContext) {
     const normalized: GenerationLogAsset[] = [];
     for (const [assetIndex, asset] of assets.entries()) {
         const assetContext = { ...context, targetSize: asset.targetSize, assetIndex, assetCount: assets.length };
@@ -58,27 +59,22 @@ export async function normalizeAssets(assets: Array<Partial<GenerationLogAsset> 
         const sourceUrl = (asset.url || "").trim();
         const remoteUrl = normalizeRemoteUrl(asset.remoteUrl || (isRemoteAssetUrl(sourceUrl) ? sourceUrl : ""));
         const existingServerUrl = normalizeServerAssetUrl(asset.serverUrl || (isServerAssetUrl(sourceUrl) ? sourceUrl : ""));
-        let serverUrl = existingServerUrl;
+        const existingStorageKey = normalizeStorageKey(asset.storageKey) || localMediaStorageKeyFromValue(existingServerUrl) || localMediaStorageKeyFromValue(sourceUrl);
         let stored: GenerationLogAsset | null = null;
 
-        if (!sourceUrl || sourceUrl.startsWith("blob:")) {
-            if (!remoteUrl && !serverUrl) continue;
+        if (existingStorageKey) {
+            stored = { type, storageKey: existingStorageKey };
         } else if (sourceUrl.startsWith("data:")) {
             stored = await writeDataUrlAsset(sourceUrl, type, assetContext);
-        } else if (isRemoteAssetUrl(sourceUrl)) {
-            stored = await writeRemoteAsset(sourceUrl, type, assetContext);
+        } else if (remoteUrl || isRemoteAssetUrl(sourceUrl)) {
+            stored = await writeRemoteAsset(remoteUrl || sourceUrl, type, assetContext);
             if (!stored) throw new Error("生成媒体保存到服务器失败");
         }
-
-        if (stored) serverUrl = stored.serverUrl || stored.url;
-        const accessUrl = serverUrl || remoteUrl || sourceUrl;
-        if (!accessUrl || accessUrl.startsWith("blob:") || accessUrl.startsWith("data:")) continue;
+        if (!stored) continue;
 
         normalized.push({
             type,
-            url: normalizeText(accessUrl, "", 4000),
-            remoteUrl: normalizeOptionalText(remoteUrl, undefined, 4000),
-            serverUrl: normalizeOptionalText(serverUrl, undefined, 4000),
+            storageKey: stored.storageKey,
             mimeType: normalizeOptionalText(stored?.mimeType || asset.mimeType, undefined, 120),
             width: toOptionalNumber(stored?.width || asset.width),
             height: toOptionalNumber(stored?.height || asset.height),
@@ -144,8 +140,7 @@ export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: Gen
         bytes: bytes.length,
     };
     const external = await persistExternalMediaIfEnabled({ registration, bytes });
-    const serverUrl = `/api/generation-log-assets/${relativePath.split("/").map(encodeURIComponent).join("/")}`;
-    if (external) return { type, url: serverUrl, serverUrl, mimeType, bytes: bytes.length, width: normalized.width, height: normalized.height };
+    if (external) return { type, storageKey: relativePath, mimeType, bytes: bytes.length, width: normalized.width, height: normalized.height };
     const filePath = resolve(ASSET_ROOT, relativePath);
     await mkdir(dirname(filePath), { recursive: true });
     await writeFile(filePath, bytes);
@@ -155,7 +150,7 @@ export async function writeAssetBytes(bytes: Buffer, mimeType: string, type: Gen
         await unlink(filePath).catch(() => undefined);
         throw error;
     }
-    return { type, url: serverUrl, serverUrl, mimeType, bytes: bytes.length, width: normalized.width, height: normalized.height };
+    return { type, storageKey: relativePath, mimeType, bytes: bytes.length, width: normalized.width, height: normalized.height };
 }
 
 export function maxServerAssetBytes(type: GenerationLogKind) {
@@ -210,11 +205,12 @@ export function collectReferencedLocalAssetPaths(db: GenerationLogDatabase) {
 }
 
 export function localAssetUrls(asset: GenerationLogAsset) {
-    return [asset.url, asset.serverUrl].filter((url): url is string => Boolean(url && isServerAssetUrl(url)));
+    return asset.storageKey ? [stableAssetUrl(asset)] : [];
 }
 
 export function stableAssetUrl(asset: GenerationLogAsset) {
-    return asset.serverUrl || asset.url || asset.remoteUrl || "";
+    const key = normalizeStorageKey(asset.storageKey);
+    return key ? `/api/generation-log-assets/${key.split("/").map(encodeURIComponent).join("/")}` : "";
 }
 
 export function localAssetUrlToPath(url: string) {
@@ -386,10 +382,10 @@ export async function insertPostgresGenerationLogAssets(db: QueryExecutor, logId
     for (const [index, asset] of assets.entries()) {
         await db.query(
             `
-            INSERT INTO generation_log_assets (generation_log_id, type, url, remote_url, server_url, mime_type, width, height, bytes, sort_order)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO generation_log_assets (generation_log_id, type, storage_key, mime_type, width, height, bytes, sort_order)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             `,
-            [logId, asset.type, asset.url, asset.remoteUrl || null, asset.serverUrl || null, asset.mimeType || null, asset.width || null, asset.height || null, asset.bytes || null, index],
+            [logId, asset.type, asset.storageKey, asset.mimeType || null, asset.width || null, asset.height || null, asset.bytes || null, index],
         );
     }
 }
@@ -425,9 +421,7 @@ export function mapPostgresGenerationLog(row: Record<string, unknown>, assets: G
 export function mapPostgresGenerationLogAsset(row: Record<string, unknown>): GenerationLogAsset {
     return {
         type: row.type === "video" ? "video" : "image",
-        url: dbText(row.url),
-        remoteUrl: dbOptionalText(row.remote_url),
-        serverUrl: dbOptionalText(row.server_url),
+        storageKey: dbText(row.storage_key),
         mimeType: dbOptionalText(row.mime_type),
         width: dbOptionalNumber(row.width),
         height: dbOptionalNumber(row.height),
@@ -492,7 +486,7 @@ export function normalizeStoredLog(log: Partial<StoredGenerationLog>): StoredGen
         count: normalizePositiveInteger(log.count, 1),
         successCount: normalizeNonNegativeInteger(log.successCount, status === "success" ? 1 : 0),
         failCount: normalizeNonNegativeInteger(log.failCount, status === "failed" ? 1 : 0),
-        assets: Array.isArray(log.assets) ? log.assets.map(normalizeStoredAsset).filter((asset): asset is GenerationLogAsset => Boolean(asset?.url)) : [],
+        assets: Array.isArray(log.assets) ? log.assets.map(normalizeStoredAsset).filter((asset): asset is GenerationLogAsset => Boolean(asset?.storageKey)) : [],
         requestSnapshot: normalizeGenerationLogRequestSnapshot(log.requestSnapshot),
         taskId: normalizeOptionalText(log.taskId, undefined, 160),
         error: normalizeOptionalText(log.error, undefined, 1000),
@@ -599,24 +593,24 @@ function normalizeSnapshotUrl(value: unknown) {
     return url && !/^(data|blob):/i.test(url) ? url : undefined;
 }
 
-export function normalizeStoredAsset(asset: Partial<GenerationLogAsset> | undefined): GenerationLogAsset | null {
+export function normalizeStoredAsset(asset: (Partial<GenerationLogAsset> & { url?: string; remoteUrl?: string; serverUrl?: string }) | undefined): GenerationLogAsset | null {
     if (!asset) return null;
     const type = asset.type === "video" ? "video" : "image";
-    const url = normalizeOptionalText(asset.url, undefined, 4000) || "";
-    const remoteUrl = normalizeRemoteUrl(asset.remoteUrl || (isRemoteAssetUrl(url) ? url : ""));
-    const serverUrl = normalizeServerAssetUrl(asset.serverUrl || (isServerAssetUrl(url) ? url : ""));
-    const accessUrl = serverUrl || remoteUrl || url;
-    if (!accessUrl) return null;
+    const storageKey = normalizeStorageKey(asset.storageKey);
+    if (!storageKey) return null;
     return {
         type,
-        url: normalizeText(accessUrl, "", 4000),
-        remoteUrl: normalizeOptionalText(remoteUrl, undefined, 4000),
-        serverUrl: normalizeOptionalText(serverUrl, undefined, 4000),
+        storageKey,
         mimeType: normalizeOptionalText(asset.mimeType, undefined, 120),
         width: toOptionalNumber(asset.width),
         height: toOptionalNumber(asset.height),
         bytes: toOptionalNumber(asset.bytes),
     };
+}
+
+function normalizeStorageKey(value: unknown) {
+    const key = normalizeOptionalText(value, undefined, 1000)?.replace(/\\/g, "/").replace(/^\/+/, "") || "";
+    return key && !key.split("/").some((segment) => !segment || segment === "." || segment === "..") ? key : "";
 }
 
 export function emptyDb(): GenerationLogDatabase {

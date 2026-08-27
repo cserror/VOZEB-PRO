@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ records: [] as Array<Record<string, unknown>> }));
+const mocks = vi.hoisted(() => ({
+    records: [] as Array<Record<string, unknown>>,
+    mediaReferenceWrite: vi.fn(),
+}));
 
 vi.mock("@/lib/server/database", () => ({
     ensurePostgresSchema: vi.fn(),
@@ -14,6 +17,9 @@ vi.mock("@/lib/server/data-adapter", () => ({
     writeJsonDataFile: vi.fn(async (_fileName: string, value: Array<Record<string, unknown>>) => {
         mocks.records = structuredClone(value);
     }),
+}));
+vi.mock("@/lib/server/media-reference-write-guard", () => ({
+    withActiveMediaReferenceWrite: mocks.mediaReferenceWrite,
 }));
 
 import { getDatabaseProvider, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
@@ -48,6 +54,7 @@ describe("mutateStoredGenerationTask", () => {
         vi.mocked(getDatabaseProvider).mockReturnValue("file");
         vi.mocked(postgresQuery).mockReset();
         vi.mocked(withPostgresTransaction).mockReset();
+        mocks.mediaReferenceWrite.mockReset().mockImplementation(async (_storageKeys, _options, write) => write());
         const now = Date.now();
         mocks.records = [
             {
@@ -275,6 +282,20 @@ describe("mutateStoredGenerationTask", () => {
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 1)).resolves.toMatchObject({ id: "video-one" });
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 2)).resolves.toMatchObject({ id: "video-retry" });
         await expect(getStoredGenerationTaskByRequest<{ id: string }>("video", "user", "request-one", 3)).resolves.toBeNull();
+    });
+
+    it("writes a task reference through the executor that holds the media row lock", async () => {
+        vi.mocked(getDatabaseProvider).mockReturnValue("postgres");
+        const now = Date.now();
+        const task = { id: "image-one", userId: "user", status: "pending", createdAt: now, updatedAt: now };
+        const query = vi.fn().mockResolvedValue({ rows: [{ payload: task }] });
+        mocks.mediaReferenceWrite.mockImplementationOnce(async (_storageKeys, _options, write) => write({ query }));
+
+        await expect(createStoredGenerationTask("image", task, 60_000, { referenceStorageKeys: ["permanent/reference.png"] })).resolves.toEqual(task);
+
+        expect(mocks.mediaReferenceWrite).toHaveBeenCalledWith(["permanent/reference.png"], { ownerUserId: "user" }, expect.any(Function));
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO generation_tasks"), expect.any(Array));
+        expect(vi.mocked(postgresQuery)).not.toHaveBeenCalled();
     });
 
     it("finds only the current user's exact channel task identity", async () => {

@@ -12,9 +12,11 @@ import {
     type PublishedWorkSummaryRecord,
     type PublishedWorkVersionRecord,
     type PublishedWorkVisibility,
+    type QueryExecutor,
 } from "@/lib/server/database";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { getLocalMediaRegistration, getLocalMediaRegistrations, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
 import { moderateWorkContent } from "@/lib/server/work-content-moderation";
 import { userAvatarUrl } from "@/lib/user-avatar";
 
@@ -134,7 +136,7 @@ export async function createWorkPublicationDraft(userIdValue: unknown, input: Wo
 
     return withPostgresTransaction(async (client) => {
         const repos = createPostgresRepositories(client);
-        const [source, user] = await Promise.all([resolveSource(repos, userId, sourceType, sourceId), repos.users.getById(userId)]);
+        const [source, user] = await Promise.all([resolveSource(repos, userId, sourceType, sourceId, client), repos.users.getById(userId)]);
         if (!user || user.status !== "active") throw new WorkPublicationServiceError("用户不可用", 403);
         const draft = normalizeDraft(input, source.title, user, undefined, source.candidates);
         const now = new Date().toISOString();
@@ -178,7 +180,7 @@ export async function updateWorkPublicationDraft(userIdValue: unknown, workIdVal
         if (!current || current.workId !== work.id) throw new WorkPublicationServiceError("作品版本不存在", 409);
         if (current.moderationStatus === "pending") throw new WorkPublicationServiceError("作品正在审核，不能编辑", 409);
 
-        const [source, user, existingAssets] = await Promise.all([resolveSource(repos, userId, work.sourceType, work.sourceId), repos.users.getById(userId), repos.workPublications.listVersionAssets(current.id)]);
+        const [source, user, existingAssets] = await Promise.all([resolveSource(repos, userId, work.sourceType, work.sourceId, client), repos.users.getById(userId), repos.workPublications.listVersionAssets(current.id)]);
         if (!user || user.status !== "active") throw new WorkPublicationServiceError("用户不可用", 403);
         const draft = normalizeDraft(input, source.title, user, { version: current, assets: existingAssets }, source.candidates);
         const now = new Date().toISOString();
@@ -355,6 +357,10 @@ export async function getPublicWorkPublication(slugValue: unknown) {
     if (!work?.publishedVersion) throw new WorkPublicationServiceError("作品不存在", 404);
     const publicAssets = work.assets.filter((asset) => asset.mediaType === "image" || asset.mediaType === "video");
     if (!publicAssets.some((asset) => asset.role === "content")) throw new WorkPublicationServiceError("作品不存在", 404);
+    const displayUrls = await resolveMediaDisplayUrls(
+        publicAssets.map((asset) => asset.storageKey),
+        { thumbnailWidth: 640 },
+    );
     return {
         id: work.id,
         slug: work.slug,
@@ -378,7 +384,7 @@ export async function getPublicWorkPublication(slugValue: unknown) {
             role: asset.role,
             sortOrder: asset.sortOrder,
             metadata: asset.metadata,
-            url: publicAssetUrl(work.slug, asset.id),
+            url: displayUrls.get(asset.storageKey)?.displayUrl || publicAssetUrl(work.slug, asset.id),
         })),
     };
 }
@@ -395,7 +401,7 @@ export async function authorizePublicWorkPublicationAsset(slugValue: unknown, as
     const asset = await createPostgresRepositories().workPublications.getPublicAsset(requiredSlug(slugValue), requiredId(assetIdValue, "媒体"));
     if (!asset || (asset.mediaType !== "image" && asset.mediaType !== "video")) throw new WorkPublicationServiceError("媒体不存在", 404);
     const registration = await getLocalMediaRegistration(asset.storageKey);
-    if (!registration || registration.storageClass !== "permanent" || registration.type !== asset.mediaType) throw new WorkPublicationServiceError("媒体不存在", 404);
+    if (!registration || registration.deletionStatus === "pending" || registration.storageClass !== "permanent" || registration.type !== asset.mediaType) throw new WorkPublicationServiceError("媒体不存在", 404);
     return { asset, registration };
 }
 
@@ -404,14 +410,14 @@ async function assertWorkPublicationReady() {
     await ensurePostgresSchema();
 }
 
-async function resolveSource(repos: WorkPublicationRepositories, userId: string, sourceType: PublishedWorkSourceType, sourceId: string) {
+async function resolveSource(repos: WorkPublicationRepositories, userId: string, sourceType: PublishedWorkSourceType, sourceId: string, executor?: QueryExecutor) {
     const source = await repos.workPublications.getSourceJson(userId, sourceType, sourceId);
     if (!source) throw new WorkPublicationServiceError("发布来源不存在", 404);
     const storageKeys = collectLocalMediaStorageKeys(source.value).slice(0, 200);
-    const registrations = await getLocalMediaRegistrations(storageKeys);
+    const registrations = await getLocalMediaRegistrations(storageKeys, executor ? { ownerUserId: userId, executor, forUpdate: true } : {});
     const sourceKeySet = new Set(storageKeys);
     const candidates = registrations
-        .filter((item) => sourceKeySet.has(item.storageKey) && item.ownerUserId === userId && item.storageClass === "permanent")
+        .filter((item) => sourceKeySet.has(item.storageKey) && item.ownerUserId === userId && item.storageClass === "permanent" && item.deletionStatus !== "pending")
         .filter((item) => item.type === "image" || item.type === "video")
         .map(mediaCandidate)
         .sort((left, right) => storageKeys.indexOf(left.storageKey) - storageKeys.indexOf(right.storageKey));

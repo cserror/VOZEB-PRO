@@ -4,6 +4,7 @@ import { Button, Popover } from "antd";
 import { ArrowLeftRight, ImagePlus, Upload, X } from "lucide-react";
 import { useState } from "react";
 
+import { creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import type { CreativeVideoReferenceMode, VideoReferenceRole } from "@/lib/video-reference-contract";
@@ -167,5 +168,5 @@ function FrameSlot({
 }
 
 function assetUrl(asset: CreativeAsset | undefined) {
-    return asset?.serverUrl || asset?.remoteUrl || "";
+    return asset ? creativeAssetThumbnailUrl(asset) : "";
 }

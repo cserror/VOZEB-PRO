@@ -1,4 +1,5 @@
 import type { QueryExecutor } from "@/lib/server/database/postgres";
+import { mediaRouteUrl } from "@/lib/media-route-url";
 import type { AnnouncementRecord, GenerationKind, GenerationLogAssetRecord, GenerationLogRecord, GenerationStatus, PageInput, PageResult, PromptRecord, PromptScope } from "./repository-shared";
 import { CREATE_OVERVIEW_RECENT_ASSET_LIMIT, type CreateOverviewAsset, type CreateOverviewTask } from "@/lib/create-workbench-overview";
 import { mapAnnouncement, mapGenerationLog, mapGenerationLogAsset, mapPrompt } from "./repository-record-mappers";
@@ -266,7 +267,7 @@ export class GenerationLogsRepository {
                    rows.conversation_id, COALESCE(NULLIF(rows.slot_json->>'taskId', ''), rows.task_id) AS result_task_id,
                    COALESCE(NULLIF(rows.slot_json->>'error', ''), rows.error) AS result_error,
                    rows.duration_ms, rows.created_at, rows.completed_at,
-                   asset.type AS asset_type, asset.url AS asset_url, asset.remote_url AS asset_remote_url, asset.server_url AS asset_server_url,
+                   asset.type AS asset_type, asset.storage_key AS asset_storage_key,
                    asset.mime_type AS asset_mime_type, asset.width AS asset_width, asset.height AS asset_height, asset.bytes AS asset_bytes,
                    count(*) OVER() AS total_count
             FROM filtered_results rows
@@ -359,29 +360,28 @@ export class GenerationLogsRepository {
                     CONCAT(log.id, '-', asset.sort_order) AS id,
                     asset.type AS kind,
                     COALESCE(NULLIF(btrim(log.title), ''), CASE WHEN asset.type = 'video' THEN '生成视频' ELSE '生成图片' END) AS title,
-                    COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) AS url,
+                    asset.storage_key,
                     log.created_at,
                     asset.sort_order
                 FROM generation_logs log
                 JOIN generation_log_assets asset ON asset.generation_log_id = log.id
                 WHERE log.user_id = $1
                   AND log.status = 'success'
-                  AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) IS NOT NULL
-                  AND COALESCE(NULLIF(asset.server_url, ''), NULLIF(asset.url, ''), NULLIF(asset.remote_url, '')) !~* '^(data|blob):'
+                  AND NULLIF(asset.storage_key, '') IS NOT NULL
             ),
             ranked_assets AS (
                 SELECT
                     id,
                     kind,
                     title,
-                    url,
+                    storage_key,
                     created_at,
                     sort_order,
-                    ROW_NUMBER() OVER (PARTITION BY url ORDER BY created_at DESC, sort_order ASC) AS duplicate_rank
+                    ROW_NUMBER() OVER (PARTITION BY storage_key ORDER BY created_at DESC, sort_order ASC) AS duplicate_rank
                 FROM asset_candidates
             ),
             recent_rows AS (
-                SELECT id, kind, title, url, created_at, sort_order
+                SELECT id, kind, title, storage_key, created_at, sort_order
                 FROM ranked_assets
                 WHERE duplicate_rank = 1
                 ORDER BY created_at DESC, sort_order ASC
@@ -393,7 +393,7 @@ export class GenerationLogsRepository {
                     FROM running_rows
                 ), '[]'::jsonb) AS running_tasks,
                 COALESCE((
-                    SELECT jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'title', title, 'url', url, 'createdAt', created_at) ORDER BY created_at DESC, sort_order ASC)
+                    SELECT jsonb_agg(jsonb_build_object('id', id, 'kind', kind, 'title', title, 'storageKey', storage_key, 'createdAt', created_at) ORDER BY created_at DESC, sort_order ASC)
                     FROM recent_rows
                 ), '[]'::jsonb) AS recent_assets
             `,
@@ -411,9 +411,10 @@ export class GenerationLogsRepository {
             recentAssets: jsonObjects(row.recent_assets)
                 .flatMap((item): CreateOverviewAsset[] => {
                     const id = textValue(item.id);
-                    const url = textValue(item.url);
-                    if (!id || !url || /^(data|blob):/i.test(url)) return [];
-                    return [{ id, kind: item.kind === "video" ? "video" : "image", title: textValue(item.title), url, createdAt: isoValue(item.createdAt) }];
+                    const storageKey = textValue(item.storageKey);
+                    if (!id || !storageKey) return [];
+                    const kind = item.kind === "video" ? ("video" as const) : ("image" as const);
+                    return [{ id, kind, title: textValue(item.title), storageKey, displayUrl: mediaRouteUrl("generation", storageKey), createdAt: isoValue(item.createdAt) }];
                 })
                 .slice(0, CREATE_OVERVIEW_RECENT_ASSET_LIMIT),
         };
@@ -444,14 +445,14 @@ export class GenerationLogsRepository {
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
 
-    async listByUserAndAssetUrls(userId: string, urls: string[]) {
-        if (!urls.length) return [];
+    async listByUserAndStorageKeys(userId: string, storageKeys: string[]) {
+        if (!storageKeys.length) return [];
         const result = await this.db.query(
             `SELECT DISTINCT gl.* FROM generation_logs gl
              JOIN generation_log_assets asset ON asset.generation_log_id = gl.id
-             WHERE gl.user_id = $1 AND COALESCE(NULLIF(asset.server_url, ''), asset.url) = ANY($2::text[])
+             WHERE gl.user_id = $1 AND asset.storage_key = ANY($2::text[])
              ORDER BY gl.created_at DESC, gl.id ASC`,
-            [userId, urls],
+            [userId, storageKeys],
         );
         return this.attachAssets(result.rows.map(mapGenerationLog));
     }
@@ -537,10 +538,10 @@ export class GenerationLogsRepository {
         for (const [index, asset] of assets.entries()) {
             await this.db.query(
                 `
-                INSERT INTO generation_log_assets (generation_log_id, type, url, remote_url, server_url, mime_type, width, height, bytes, sort_order)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                INSERT INTO generation_log_assets (generation_log_id, type, storage_key, mime_type, width, height, bytes, sort_order)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                 `,
-                [logId, asset.type, asset.url, asset.remoteUrl || null, asset.serverUrl || null, asset.mimeType || null, asset.width || null, asset.height || null, asset.bytes || null, index],
+                [logId, asset.type, asset.storageKey, asset.mimeType || null, asset.width || null, asset.height || null, asset.bytes || null, index],
             );
         }
     }
@@ -558,7 +559,7 @@ function overviewBuckets(value: unknown): GenerationLogOverviewBucket[] {
 }
 
 function mapGenerationHistoryResultRecord(row: Record<string, unknown>): GenerationHistoryResultRecord {
-    const assetUrl = stringValue(row.asset_url);
+    const assetStorageKey = stringValue(row.asset_storage_key);
     const assetType = row.asset_type === "video" ? "video" : row.asset_type === "image" ? "image" : undefined;
     const parameters = row.parameters && typeof row.parameters === "object" && !Array.isArray(row.parameters) ? (row.parameters as Record<string, unknown>) : {};
     return {
@@ -574,13 +575,11 @@ function mapGenerationHistoryResultRecord(row: Record<string, unknown>): Generat
         parameters: Object.fromEntries(Object.entries(parameters).flatMap(([key, value]) => (typeof value === "string" && value.trim() ? [[key, value.trim()]] : []))),
         conversationId: optionalString(row.conversation_id),
         taskId: optionalString(row.result_task_id),
-        ...(assetType && assetUrl
+        ...(assetType && assetStorageKey
             ? {
                   asset: {
                       type: assetType,
-                      url: assetUrl,
-                      remoteUrl: optionalString(row.asset_remote_url),
-                      serverUrl: optionalString(row.asset_server_url),
+                      storageKey: assetStorageKey,
                       mimeType: optionalString(row.asset_mime_type),
                       width: optionalNumber(row.asset_width),
                       height: optionalNumber(row.asset_height),

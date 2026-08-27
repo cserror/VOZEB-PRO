@@ -15,6 +15,10 @@ describe("drama media thumbnail", () => {
         expect(markup).toContain(`<button type="button"`);
         expect(markup).toContain(`aria-label="查看${type === "image" ? "图片" : "视频"}：${title}"`);
         expect(markup).toContain(type === "image" ? "<img" : "<video");
-        expect(markup).toContain(`/media/${type}`);
+        if (type === "image") expect(markup).toContain("/media/image");
+        else {
+            expect(markup).not.toContain("/media/video");
+            expect(markup).toContain('preload="none"');
+        }
     });
 });

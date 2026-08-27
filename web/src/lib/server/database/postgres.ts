@@ -200,6 +200,8 @@ const POSTGRES_SCHEMA_OBJECTS = [
     "local_media_assets_local_filter_idx",
     "local_media_assets_storage_provider_check",
     "local_media_assets_external_object_idx",
+    "local_media_assets_pending_deletion_idx",
+    "local_media_assets_deletion_status_check",
     "canvas_projects_user_updated_idx",
     "library_assets_user_updated_idx",
     "drama_projects_user_updated_idx",

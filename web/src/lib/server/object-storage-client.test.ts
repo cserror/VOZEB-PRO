@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
 import { objectStorageErrorMessage, testObjectStorageConnection } from "./object-storage-client";
@@ -12,6 +12,8 @@ const config: ObjectStorageRuntimeConfig = {
     region: "auto",
     bucket: "media",
     prefix: "vozeb-pro",
+    publicBaseUrl: "",
+    imageDeliveryProvider: "none",
     accessKeyId: "access",
     secretAccessKey: "secret",
     forcePathStyle: true,
@@ -21,7 +23,29 @@ const servers: Array<ReturnType<typeof createServer>> = [];
 
 describe("object storage client", () => {
     afterEach(async () => {
+        vi.unstubAllGlobals();
         await Promise.all(servers.splice(0).map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+    });
+
+    it("reads the uploaded probe through the configured public media domain", async () => {
+        const publicFetch = vi.fn().mockResolvedValue(
+            new Response("vozeb-pro-storage-check", {
+                status: 200,
+                headers: { "Content-Type": "text/plain" },
+            }),
+        );
+        vi.stubGlobal("fetch", publicFetch);
+        const server = createServer(respondToS3Probe);
+        servers.push(server);
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("测试服务器没有可用端口");
+
+        await testObjectStorageConnection({ ...config, endpoint: `http://127.0.0.1:${address.port}`, publicBaseUrl: "https://img.example.com", imageDeliveryProvider: "cloudflare" });
+
+        expect(publicFetch).toHaveBeenCalledOnce();
+        expect(publicFetch.mock.calls[0]?.[0]).toMatch(/^https:\/\/img\.example\.com\/vozeb-pro\/media\/\.vozeb-healthcheck\/[0-9a-f-]+\.txt$/);
+        expect(publicFetch.mock.calls[0]?.[1]).toMatchObject({ cache: "no-store", redirect: "error" });
     });
 
     it("checks list, write and delete capabilities without leaving the probe object", async () => {

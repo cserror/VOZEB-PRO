@@ -4,6 +4,7 @@ import { FileAudio2, Film } from "lucide-react";
 import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
+import { creativeAssetDisplayUrl, creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
@@ -14,7 +15,7 @@ import { CreativeResultSwitcher, useSelectedCreativeResult } from "./creative-re
 const ACTIONS_MIN_WIDTH = 352;
 
 export function CreativeMediaResult({ assets, fallbackRatio, renderActions }: { assets: CreativeAsset[]; fallbackRatio?: string; renderActions?: (activeAsset: CreativeAsset) => ReactNode }) {
-    const results = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type !== "text" && assetUrl(asset)), [assets]);
+    const results = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type !== "text" && creativeAssetDisplayUrl(asset)), [assets]);
     const { selectedResult: activeAsset, selectedIndex, selectResult } = useSelectedCreativeResult(results);
     const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
     if (!activeAsset) return null;
@@ -23,7 +24,7 @@ export function CreativeMediaResult({ assets, fallbackRatio, renderActions }: { 
     const variant = activeAsset.type === "video" ? "video-result" : "image-result";
     const layout = creativeAssetLayout(sourceDimensions, { variant, ratio: fallbackRatio });
     const mediaWidth = activeAsset.type === "audio" ? `${ACTIONS_MIN_WIDTH}px` : String(layout?.container.width || `${ACTIONS_MIN_WIDTH}px`);
-    const url = assetUrl(activeAsset);
+    const url = creativeAssetDisplayUrl(activeAsset);
     const resultStyle = { "--creative-result-media-width": mediaWidth } as CSSProperties;
 
     return (
@@ -68,7 +69,7 @@ export function CreativeMediaResult({ assets, fallbackRatio, renderActions }: { 
                 height={layout?.height || 240}
                 className="col-start-1 row-start-3 sm:col-start-2 sm:row-start-1"
                 renderThumbnail={(asset, index) => {
-                    const previewUrl = assetUrl(asset);
+                    const previewUrl = creativeAssetThumbnailUrl(asset);
                     if (asset.type === "image") return <img src={imagePreviewUrl(previewUrl, 240)} alt={asset.title || `生成结果 ${index + 1}`} loading="lazy" className="size-full object-cover" />;
                     if (asset.type === "video") {
                         const coverUrl = typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl.trim() : "";
@@ -92,8 +93,4 @@ function validDimensions(asset: Pick<CreativeAsset, "width" | "height">) {
     const width = Number(asset.width);
     const height = Number(asset.height);
     return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : undefined;
-}
-
-function assetUrl(asset: CreativeAsset) {
-    return asset.serverUrl || asset.remoteUrl || "";
 }

@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { relative, resolve } from "node:path";
 
 import { getAuthSettings, type UserRole } from "@/lib/auth/store";
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { collectLocalMediaStorageKeys, countLocalMediaReferences, localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
 import { deleteLocalMediaAssetsByStorageKeys, deleteUserLocalMediaAssets, GENERATION_MEDIA_ROOT } from "@/lib/server/local-media-storage";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
 import { getLocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { assertActiveMediaReferences, withFileMediaLifecycleLock } from "@/lib/server/media-reference-write-guard";
 import {
     defaultSummary,
     isGenerationKind,
@@ -29,7 +30,6 @@ import {
     parseDateStart,
     readGenerationLogDb,
     sourceLabel,
-    stableAssetUrl,
 } from "./generation-log-repository";
 import type { GenerationAssetStats, GenerationLogInput, GenerationLogListOptions, StoredGenerationLog } from "./generation-log-types";
 
@@ -92,16 +92,16 @@ export async function listUserGenerationLogsForDelete(userId: string, ids: strin
         await ensurePostgresSchema();
         const repository = createPostgresRepositories().generationLogs;
         const requestedLogs = await repository.getByIds(Array.from(idSet), targetUserId);
-        const assetUrls = Array.from(new Set(requestedLogs.flatMap((log) => log.assets.map(stableAssetUrl).filter(Boolean))));
-        const sharedLogs = await repository.listByUserAndAssetUrls(targetUserId, assetUrls);
+        const storageKeys = Array.from(new Set(requestedLogs.flatMap((log) => log.assets.map((asset) => asset.storageKey).filter(Boolean))));
+        const sharedLogs = await repository.listByUserAndStorageKeys(targetUserId, storageKeys);
         return uniqueGenerationLogs([...requestedLogs, ...sharedLogs]).map(toStoredGenerationLog);
     }
     const db = await readGenerationLogDb();
     const userLogs = db.logs.filter((log) => log.userId === targetUserId);
     const requestedLogs = userLogs.filter((log) => idSet.has(log.id));
-    const assetUrls = new Set(requestedLogs.flatMap((log) => log.assets.map(stableAssetUrl).filter(Boolean)));
+    const storageKeys = new Set(requestedLogs.flatMap((log) => log.assets.map((asset) => asset.storageKey).filter(Boolean)));
 
-    return userLogs.filter((log) => idSet.has(log.id) || log.assets.some((asset) => assetUrls.has(stableAssetUrl(asset))));
+    return userLogs.filter((log) => idSet.has(log.id) || log.assets.some((asset) => storageKeys.has(asset.storageKey)));
 }
 
 export async function recordGenerationLog(input: GenerationLogInput) {
@@ -118,33 +118,43 @@ export async function recordGenerationLog(input: GenerationLogInput) {
             taskId: input.taskId || existing?.taskId,
             originalName: input.title || existing?.title,
         });
-        return withPostgresTransaction(async (client) => {
+        return withPostgresTransaction(async (client: QueryExecutor) => {
             const transactionRepository = createPostgresRepositories(client).generationLogs;
             const current = await transactionRepository.getById(id, true);
             if (current && current.userId !== input.userId) throw new Error("generation log id belongs to another user");
+            await assertActiveMediaReferences(
+                introducedMediaStorageKeys(current?.assets || [], assets),
+                { ownerUserId: input.userId, executor: client },
+            );
             const next = buildGenerationLog(input, id, current ? toStoredGenerationLog(current) : undefined, assets);
             return toStoredGenerationLog(await transactionRepository.upsert(next));
         });
     }
-    return mutateGenerationLogDb(async (db) => {
-        const now = new Date().toISOString();
-        const existing = db.logs.find((log) => log.id === id);
-        if (existing && existing.userId !== input.userId) {
-            throw new Error("generation log id belongs to another user");
-        }
-        const assets = await normalizeAssets(input.assets || [], {
-            ownerUserId: input.userId,
-            source: input.source || existing?.source || "unknown",
-            conversationId: input.conversationId || existing?.conversationId,
-            taskId: input.taskId || existing?.taskId,
-            originalName: input.title || existing?.title,
-        });
-        const completedAt = input.status === "pending" ? undefined : normalizeTime(input.completedAt, now);
-        const next = buildGenerationLog(input, id, existing, assets, now, completedAt);
-
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
-        return next;
+    const currentDb = await readGenerationLogDb();
+    const current = currentDb.logs.find((log) => log.id === id);
+    if (current && current.userId !== input.userId) throw new Error("generation log id belongs to another user");
+    const assets = await normalizeAssets(input.assets || [], {
+        ownerUserId: input.userId,
+        source: input.source || current?.source || "unknown",
+        conversationId: input.conversationId || current?.conversationId,
+        taskId: input.taskId || current?.taskId,
+        originalName: input.title || current?.title,
     });
+    const write = () =>
+        mutateGenerationLogDb(async (db) => {
+            const now = new Date().toISOString();
+            const existing = db.logs.find((log) => log.id === id);
+            if (existing && existing.userId !== input.userId) throw new Error("generation log id belongs to another user");
+            await assertActiveMediaReferences(introducedMediaStorageKeys(existing?.assets || [], assets), { ownerUserId: input.userId });
+            const completedAt = input.status === "pending" ? undefined : normalizeTime(input.completedAt, now);
+            const next = buildGenerationLog(input, id, existing, assets, now, completedAt);
+
+            db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
+            return next;
+        });
+    const storageKeys = assets.map((asset) => asset.storageKey);
+    if (!storageKeys.length) return write();
+    return withFileMediaLifecycleLock(write);
 }
 
 export async function deleteGenerationLogs(ids: string[], options: { cascadeUserMedia?: boolean } = {}) {
@@ -297,6 +307,11 @@ function toStoredGenerationLog(log: { source: string; requestSnapshot?: unknown 
 
 function uniqueGenerationLogs<T extends { id: string }>(logs: T[]) {
     return Array.from(new Map(logs.map((log) => [log.id, log])).values());
+}
+
+function introducedMediaStorageKeys(current: StoredGenerationLog["assets"], next: StoredGenerationLog["assets"]) {
+    const currentKeys = new Set(current.map((asset) => asset.storageKey));
+    return next.map((asset) => asset.storageKey).filter((storageKey) => !currentKeys.has(storageKey));
 }
 
 async function deleteRemovedLogMedia(logs: StoredGenerationLog[], cascadeUserMedia = false) {

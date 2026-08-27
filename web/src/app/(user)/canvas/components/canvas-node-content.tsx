@@ -425,6 +425,7 @@ export function ImageContent({
     const isBatchChild = Boolean(node.metadata?.batchRootId);
     const imageRef = useRef<HTMLImageElement>(null);
     const previewWidth = canvasImagePreviewWidth(node.width, scale, node.metadata?.naturalWidth);
+    const displayUrl = node.metadata?.displayUrl || node.metadata?.content || "";
     const reportDimensions = useCallback(
         (image: HTMLImageElement) => {
             if (node.metadata?.naturalWidth && node.metadata?.naturalHeight) return;
@@ -436,14 +437,14 @@ export function ImageContent({
     useEffect(() => {
         const image = imageRef.current;
         if (image?.complete) reportDimensions(image);
-    }, [node.metadata?.content, reportDimensions]);
+    }, [displayUrl, reportDimensions]);
 
     return (
         <BatchFrame batchCount={isBatchRoot ? batchCount : 0} batchExpanded={batchExpanded} batchOpening={batchOpening} batchRecovering={batchRecovering} onToggleBatch={onToggleBatch}>
             <div className="h-full w-full overflow-hidden rounded-3xl" style={{ background: theme.node.fill }}>
                 <img
                     ref={imageRef}
-                    src={imagePreviewUrl(node.metadata!.content!, previewWidth)}
+                    src={imagePreviewUrl(displayUrl, previewWidth)}
                     alt={node.title}
                     draggable={false}
                     loading="lazy"

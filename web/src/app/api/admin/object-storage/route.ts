@@ -32,6 +32,8 @@ export async function PATCH(request: Request) {
             region: stringValue(body.region),
             bucket: stringValue(body.bucket),
             prefix: stringValue(body.prefix),
+            publicBaseUrl: typeof body.publicBaseUrl === "string" ? body.publicBaseUrl : undefined,
+            imageDeliveryProvider: body.imageDeliveryProvider === "cloudflare" ? "cloudflare" : "none",
             forcePathStyle: body.forcePathStyle === true,
             accessKeyId: stringValue(body.accessKeyId),
             secretAccessKey: stringValue(body.secretAccessKey),
@@ -42,7 +44,7 @@ export async function PATCH(request: Request) {
             action: "admin.object-storage.update",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "object_storage", id: "primary" },
-            metadata: { enabled: body.enabled === true, forcePathStyle: body.forcePathStyle === true },
+            metadata: { enabled: body.enabled === true, imageDeliveryProvider: body.imageDeliveryProvider === "cloudflare" ? "cloudflare" : "none", forcePathStyle: body.forcePathStyle === true },
         });
         return NextResponse.json({ code: 0, data, msg: "外部存储配置已保存" }, { headers: { "Cache-Control": "private, no-store" } });
     } catch (error) {

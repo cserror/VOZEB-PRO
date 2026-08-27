@@ -4,14 +4,26 @@ import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEna
 import { readGenerationLogDb, stableAssetUrl } from "@/lib/server/generation-log-repository";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-types";
 import { listAgentRuns, type AgentRun } from "@/lib/server/agent-run-store";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
 
 export async function getCreateWorkbenchOverview(userId: string): Promise<CreateWorkbenchOverviewPayload> {
     const [latestProject, generation, agentRuns] = await Promise.all([getLatestCanvasProjectOverview(userId), getCreateGenerationOverview(userId), listAgentRuns({ userId, surface: "chat", statuses: ["planning", "running", "paused"], limit: 4 })]);
+    const mediaUrls = await resolveMediaDisplayUrls(
+        generation.recentAssets.flatMap((asset) => (asset.storageKey ? [asset.storageKey] : [])),
+        { thumbnailWidth: 640 },
+    );
     const runningTasks = [...buildCreateAgentRunOverview(agentRuns), ...generation.runningTasks]
         .filter((task, index, tasks) => tasks.findIndex((candidate) => candidate.id === task.id) === index)
         .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
         .slice(0, 4);
-    return { latestProject, runningTasks, recentAssets: generation.recentAssets };
+    return {
+        latestProject,
+        runningTasks,
+        recentAssets: generation.recentAssets.flatMap((asset) => {
+            const media = asset.storageKey ? mediaUrls.get(asset.storageKey) : undefined;
+            return media ? [{ ...asset, displayUrl: media.displayUrl, thumbnailUrl: media.thumbnailUrl }] : [];
+        }),
+    };
 }
 
 export function buildCreateAgentRunOverview(runs: AgentRun[]): CreateOverviewTask[] {
@@ -49,10 +61,10 @@ export function buildCreateGenerationOverview(logs: StoredGenerationLog[]): Pick
     for (const log of sorted) {
         if (log.status !== "success") continue;
         for (const [index, asset] of log.assets.entries()) {
-            const url = stableAssetUrl(asset).trim();
-            if (!url || /^(data|blob):/i.test(url) || seen.has(url)) continue;
-            seen.add(url);
-            recentAssets.push({ id: `${log.id}-${index}`, kind: asset.type, title: log.title || (asset.type === "video" ? "生成视频" : "生成图片"), url, createdAt: log.createdAt });
+            const storageKey = asset.storageKey.trim();
+            if (!storageKey || seen.has(storageKey)) continue;
+            seen.add(storageKey);
+            recentAssets.push({ id: `${log.id}-${index}`, kind: asset.type, title: log.title || (asset.type === "video" ? "生成视频" : "生成图片"), storageKey, displayUrl: stableAssetUrl(asset), createdAt: log.createdAt });
             if (recentAssets.length >= CREATE_OVERVIEW_RECENT_ASSET_LIMIT) return { runningTasks, recentAssets };
         }
     }

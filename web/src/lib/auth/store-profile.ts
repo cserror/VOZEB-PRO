@@ -1,4 +1,5 @@
-import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
+import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled } from "@/lib/server/database";
+import { withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 import { walletClock } from "@/lib/server/points-wallet-service";
 
 import { AuthInputError } from "./store-foundation";
@@ -8,27 +9,26 @@ import { publicUserFromAuthenticatedRecord, toPublicUser } from "./store-user-pr
 export async function updateOwnAvatarStorageKey(userId: string, avatarStorageKey: string) {
     const storageKey = avatarStorageKey.trim();
     if (!/^permanent\/\d{4}\/\d{2}\/\d{2}\/images\/.+\.webp$/i.test(storageKey)) throw new AuthInputError("头像存储格式无效");
-    if (isPostgresDatabaseEnabled()) {
-        await ensurePostgresSchema();
-        const clock = walletClock();
-        const result = await withPostgresTransaction(async (client) => {
-            const users = createPostgresRepositories(client).users;
+    return withActiveMediaReferenceWrite([storageKey], { ownerUserId: userId }, async (executor) => {
+        if (isPostgresDatabaseEnabled()) {
+            if (!executor) throw new Error("PostgreSQL media reference transaction is unavailable");
+            const clock = walletClock();
+            const users = createPostgresRepositories(executor).users;
             const user = await users.getById(userId, true);
             if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
             await users.update(userId, { avatarStorageKey: storageKey });
             const publicRecord = (await users.getPublicDetails([userId], { now: clock.now.toISOString(), date: clock.date }))[0];
             if (!publicRecord) throw new AuthInputError("用户不可用");
             return { user: publicUserFromAuthenticatedRecord(publicRecord, clock.expiresAt), previousStorageKey: user.avatarStorageKey };
+        }
+        return mutateAuthDb((db) => {
+            const user = db.users.find((item) => item.id === userId);
+            if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
+            const previousStorageKey = user.avatarStorageKey;
+            user.avatarStorageKey = storageKey;
+            user.updatedAt = new Date().toISOString();
+            return { user: toPublicUser(user, db), previousStorageKey };
         });
-        return result;
-    }
-    return mutateAuthDb((db) => {
-        const user = db.users.find((item) => item.id === userId);
-        if (!user || user.status !== "active") throw new AuthInputError("用户不可用");
-        const previousStorageKey = user.avatarStorageKey;
-        user.avatarStorageKey = storageKey;
-        user.updatedAt = new Date().toISOString();
-        return { user: toPublicUser(user, db), previousStorageKey };
     });
 }
 

@@ -178,6 +178,8 @@ export type CanvasNodeMetadata = {
     storageKey?: string;
     remoteUrl?: string;
     serverUrl?: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     mimeType?: string;
     bytes?: number;
     durationMs?: number;
@@ -223,6 +225,8 @@ export type CanvasAssistantReference = {
     type: CanvasNodeType;
     title: string;
     dataUrl?: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     storageKey?: string;
     text?: string;
 };
@@ -233,6 +237,8 @@ export type CanvasAssistantImage = {
     storageKey?: string;
     remoteUrl?: string;
     serverUrl?: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     prompt: string;
 };
 

@@ -42,6 +42,30 @@ describe("registerAgentTaskAssets", () => {
             expect.objectContaining({ ordinal: 1, remoteUrl: "https://cdn.example.com/two.mp4" }),
         ]);
     });
+
+    it("preserves storage identity from a completed image task", async () => {
+        await registerAgentTaskAssets(
+            run(),
+            { ...task(), type: "image", title: "商品主图", count: 1 },
+            {
+                dataUrl: "/api/generation-log-assets/permanent/result.png",
+                serverUrl: "/api/generation-log-assets/permanent/result.png",
+                storageKey: "permanent/result.png",
+                storageKind: "object",
+                mimeType: "image/png",
+            },
+            ["image-task-one"],
+        );
+
+        expect(mocks.registerCreativeAssets).toHaveBeenCalledWith([
+            expect.objectContaining({
+                sourceTaskId: "image-task-one",
+                storageKind: "object",
+                storageKey: "permanent/result.png",
+                serverUrl: "/api/generation-log-assets/permanent/result.png",
+            }),
+        ]);
+    });
 });
 
 function run(): AgentRun {

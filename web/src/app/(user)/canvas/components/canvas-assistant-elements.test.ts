@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { CanvasNodeType } from "../types";
-import { assistantMessageToChatMessage, canvasRunSelectedNodeIds, compactMetadata, compactSnapshot, removeCanvasAssistantSessions } from "./canvas-assistant-elements";
+import { assistantMessageToChatMessage, canvasRunSelectedNodeIds, compactMetadata, compactSnapshot, nodeToReference, removeCanvasAssistantSessions } from "./canvas-assistant-elements";
 
 describe("Canvas Agent session deletion", () => {
     const sessions = [
@@ -52,6 +52,34 @@ describe("Canvas Agent current-turn references", () => {
         expect(messageSource.indexOf("<AgentMessageAttachments")).toBeGreaterThanOrEqual(0);
         expect(messageSource.indexOf("<AgentMessageAttachments")).toBeLessThan(messageSource.indexOf("item.text"));
         expect(messageSource.indexOf("<AgentUserAvatar")).toBeGreaterThan(messageSource.indexOf("item.text"));
+    });
+
+    it("uses CDN thumbnails for Agent display while retaining the stable reference url", () => {
+        const reference = nodeToReference({
+            id: "reference",
+            type: CanvasNodeType.Image,
+            title: "参考图",
+            position: { x: 0, y: 0 },
+            width: 320,
+            height: 240,
+            metadata: {
+                content: "/api/reference-assets/permanent/reference.webp",
+                storageKey: "permanent/reference.webp",
+                displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/reference.webp",
+                thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/reference.webp",
+            },
+        });
+
+        expect(reference).toMatchObject({
+            dataUrl: "/api/reference-assets/permanent/reference.webp",
+            displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/reference.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/reference.webp",
+            storageKey: "permanent/reference.webp",
+        });
+        expect(assistantMessageToChatMessage({ id: "message", role: "user", text: "修改颜色", references: [reference!] }).attachments).toEqual([
+            { id: "reference", name: "参考图", type: "image", url: "https://img.example.com/cdn-cgi/image/width=640/reference.webp" },
+        ]);
+        expect(compactMetadata(CanvasNodeType.Image, referenceNode(reference!)).url).toBe("/api/reference-assets/permanent/reference.webp");
     });
 
     it("places compact composer thumbnails above the editable prompt", async () => {
@@ -225,3 +253,12 @@ describe("Canvas Agent current-turn references", () => {
         expect(canvasRunSelectedNodeIds(snapshot, new Set(["current-image"]))).toEqual(["config", "current-image"]);
     });
 });
+
+function referenceNode(reference: NonNullable<ReturnType<typeof nodeToReference>>) {
+    return {
+        content: reference.dataUrl,
+        storageKey: reference.storageKey,
+        displayUrl: reference.displayUrl,
+        thumbnailUrl: reference.thumbnailUrl,
+    };
+}

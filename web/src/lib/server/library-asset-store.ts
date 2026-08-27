@@ -1,6 +1,7 @@
 import type { Asset } from "@/lib/library-asset-contract";
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
-import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, type QueryExecutor } from "@/lib/server/database";
+import { withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 
 type AssetRecord = { userId: string; asset: Asset };
 type AssetDatabase = { version: 1; assets: AssetRecord[] };
@@ -61,43 +62,48 @@ export async function getLibraryAsset(userId: string, id: string) {
 }
 
 export async function createLibraryAsset(userId: string, asset: Asset) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery(`INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`, [
-            asset.id,
-            userId,
-            asset.kind,
-            asset.title,
-            JSON.stringify(asset),
-            new Date(asset.createdAt),
-            new Date(asset.updatedAt),
-        ]);
+    return withActiveMediaReferenceWrite(mediaStorageKeys(asset), { ownerUserId: userId }, async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            const query = databaseQuery(executor);
+            await query(`INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`, [
+                asset.id,
+                userId,
+                asset.kind,
+                asset.title,
+                JSON.stringify(asset),
+                new Date(asset.createdAt),
+                new Date(asset.updatedAt),
+            ]);
+            return asset;
+        }
+        await mutateDatabase((database) => ({ ...database, assets: [{ userId, asset }, ...database.assets] }));
         return asset;
-    }
-    await mutateDatabase((database) => ({ ...database, assets: [{ userId, asset }, ...database.assets] }));
-    return asset;
+    });
 }
 
 export async function createLibraryAssetIfAbsent(userId: string, asset: Asset) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery(
-            `INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
-             ON CONFLICT (id) DO NOTHING`,
-            [asset.id, userId, asset.kind, asset.title, JSON.stringify(asset), new Date(asset.createdAt), new Date(asset.updatedAt)],
-        );
-        const stored = await getLibraryAsset(userId, asset.id);
-        if (!stored) throw new Error("library asset id belongs to another user");
+    return withActiveMediaReferenceWrite(mediaStorageKeys(asset), { ownerUserId: userId }, async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            const query = databaseQuery(executor);
+            await query(
+                `INSERT INTO library_assets (id, user_id, kind, title, asset_json, created_at, updated_at)
+                 VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+                 ON CONFLICT (id) DO NOTHING`,
+                [asset.id, userId, asset.kind, asset.title, JSON.stringify(asset), new Date(asset.createdAt), new Date(asset.updatedAt)],
+            );
+            const result = await query<{ asset_json: Asset }>("SELECT asset_json FROM library_assets WHERE id = $1 AND user_id = $2", [asset.id, userId]);
+            const stored = result.rows[0]?.asset_json;
+            if (!stored) throw new Error("library asset id belongs to another user");
+            return stored;
+        }
+        let stored = asset;
+        await mutateDatabase((database) => {
+            const existing = database.assets.find((record) => record.userId === userId && record.asset.id === asset.id)?.asset;
+            stored = existing || asset;
+            return existing ? database : { ...database, assets: [{ userId, asset }, ...database.assets] };
+        });
         return stored;
-    }
-    let stored = asset;
-    await mutateDatabase((database) => {
-        const existing = database.assets.find((record) => record.userId === userId && record.asset.id === asset.id)?.asset;
-        stored = existing || asset;
-        return existing ? database : { ...database, assets: [{ userId, asset }, ...database.assets] };
     });
-    return stored;
 }
 
 export async function listLibraryGenerationResultIds(userId: string, resultIds: string[]) {
@@ -121,28 +127,29 @@ export async function listLibraryGenerationResultIds(userId: string, resultIds: 
 }
 
 export async function updateLibraryAsset(userId: string, asset: Asset) {
-    if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery("UPDATE library_assets SET kind = $3, title = $4, asset_json = $5::jsonb, updated_at = $6 WHERE id = $1 AND user_id = $2 RETURNING id", [
-            asset.id,
-            userId,
-            asset.kind,
-            asset.title,
-            JSON.stringify(asset),
-            new Date(asset.updatedAt),
-        ]);
-        return result.rows[0] ? asset : null;
-    }
-    let found = false;
-    await mutateDatabase((database) => ({
-        ...database,
-        assets: database.assets.map((record) => {
-            if (record.userId !== userId || record.asset.id !== asset.id) return record;
-            found = true;
-            return { ...record, asset };
-        }),
-    }));
-    return found ? asset : null;
+    return withActiveMediaReferenceWrite(mediaStorageKeys(asset), { ownerUserId: userId }, async (executor) => {
+        if (getDatabaseProvider() === "postgres") {
+            const result = await databaseQuery(executor)("UPDATE library_assets SET kind = $3, title = $4, asset_json = $5::jsonb, updated_at = $6 WHERE id = $1 AND user_id = $2 RETURNING id", [
+                asset.id,
+                userId,
+                asset.kind,
+                asset.title,
+                JSON.stringify(asset),
+                new Date(asset.updatedAt),
+            ]);
+            return result.rows[0] ? asset : null;
+        }
+        let found = false;
+        await mutateDatabase((database) => ({
+            ...database,
+            assets: database.assets.map((record) => {
+                if (record.userId !== userId || record.asset.id !== asset.id) return record;
+                found = true;
+                return { ...record, asset };
+            }),
+        }));
+        return found ? asset : null;
+    });
 }
 
 export async function deleteLibraryAsset(userId: string, id: string) {
@@ -167,4 +174,14 @@ function mutateDatabase(mutator: (database: AssetDatabase) => AssetDatabase) {
 
 function assetSearchText(asset: Asset) {
     return [asset.title, asset.source || "", asset.note || "", asset.tags.join(" "), asset.kind === "text" ? asset.data.content : asset.data.mimeType].join(" ").toLowerCase();
+}
+
+function mediaStorageKeys(asset: Asset): string[] {
+    if (asset.kind === "text") return [];
+    const storageKey = asset.data.storageKey?.trim();
+    return storageKey ? [storageKey] : [];
+}
+
+function databaseQuery(executor?: QueryExecutor): QueryExecutor["query"] {
+    return executor ? executor.query.bind(executor) : postgresQuery;
 }

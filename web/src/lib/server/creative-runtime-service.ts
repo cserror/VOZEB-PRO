@@ -13,6 +13,7 @@ import {
 } from "@/lib/server/creative-runtime-store";
 import { writePersistentMediaDataUrl } from "@/lib/server/reference-asset-store";
 import { deleteCreativeConversationAggregates } from "@/lib/server/creative-entity-deletion-store";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
 
 export class CreativeRuntimeServiceError extends Error {
@@ -80,7 +81,13 @@ export async function listMessagesForUser(userId: string, id: string, afterSeque
 
 export async function listAssetsForUser(userId: string, id: string) {
     await getConversationForUser(userId, id);
-    return listCreativeAssets(id, userId);
+    const assets = await listCreativeAssets(id, userId);
+    const storageKeys = Array.from(new Set(assets.flatMap((asset) => (asset.storageKey && asset.type !== "text" ? [asset.storageKey] : []))));
+    const displayUrls = await resolveMediaDisplayUrls(storageKeys, { thumbnailWidth: 640 });
+    return assets.map((asset) => {
+        const urls = asset.storageKey ? displayUrls.get(asset.storageKey) : undefined;
+        return urls ? { ...asset, ...urls } : asset;
+    });
 }
 
 export async function getAssetForUser(userId: string, id: string) {
@@ -134,7 +141,17 @@ export async function registerGenerationTaskAssetsForUser(
         projectId?: string;
         taskId: string;
         title: string;
-        assets: Array<{ type: "image" | "video" | "audio"; url: string; mimeType?: string; width?: number; height?: number; durationMs?: number; bytes?: number }>;
+        assets: Array<{
+            type: "image" | "video" | "audio";
+            url: string;
+            storageKey?: string;
+            storageKind?: "local" | "object" | "remote";
+            mimeType?: string;
+            width?: number;
+            height?: number;
+            durationMs?: number;
+            bytes?: number;
+        }>;
     },
 ) {
     if (!input.conversationId || !input.assets.length) return [];
@@ -151,7 +168,8 @@ export async function registerGenerationTaskAssetsForUser(
                 ordinal,
                 type: asset.type,
                 title: input.title || `生成${asset.type === "image" ? "图片" : asset.type === "video" ? "视频" : "音频"}`,
-                storageKind: serverUrl ? ("local" as const) : ("remote" as const),
+                storageKind: asset.storageKind || (serverUrl ? ("local" as const) : ("remote" as const)),
+                storageKey: asset.storageKey,
                 remoteUrl,
                 serverUrl,
                 mimeType: asset.mimeType,

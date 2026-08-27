@@ -794,7 +794,7 @@ describe("split Postgres repositories", () => {
     it("replaces generation assets during upsert", async () => {
         const timestamp = "2026-01-01T00:00:00.000Z";
         const { executor, query } = mockExecutor([[{ id: "log-one", user_id: "user-one", kind: "image", status: "success", created_at: timestamp, updated_at: timestamp }], [], []]);
-        const asset = { type: "image" as const, url: "/api/media/file-one", mimeType: "image/png" };
+        const asset = { type: "image" as const, storageKey: "permanent/file-one.png", mimeType: "image/png" };
 
         const saved = await createPostgresRepositories(executor).generationLogs.upsert({
             id: "log-one",
@@ -887,6 +887,23 @@ describe("split Postgres repositories", () => {
         expect(params).toEqual(["user-one", 24]);
     });
 
+    it("finds a user's generation logs by stable media storage keys", async () => {
+        const timestamp = "2026-01-01T00:00:00.000Z";
+        const { executor, query } = mockExecutor([
+            [{ id: "log-shared", user_id: "user-one", kind: "image", status: "success", created_at: timestamp, updated_at: timestamp }],
+            [{ generation_log_id: "log-shared", type: "image", storage_key: "permanent/shared.webp", sort_order: 0 }],
+        ]);
+
+        const logs = await createPostgresRepositories(executor).generationLogs.listByUserAndStorageKeys("user-one", ["permanent/shared.webp"]);
+
+        expect(logs[0]?.assets[0]?.storageKey).toBe("permanent/shared.webp");
+        const [statement, params] = queryArgs(query, 0);
+        expect(String(statement)).toContain("asset.storage_key = ANY($2::text[])");
+        expect(String(statement)).not.toContain("asset.server_url");
+        expect(String(statement)).not.toContain("asset.url");
+        expect(params).toEqual(["user-one", ["permanent/shared.webp"]]);
+    });
+
     it("rejects an unbounded or invalid generation-log deletion batch", async () => {
         const { executor, query } = mockExecutor([]);
         const repository = createPostgresRepositories(executor).generationLogs;
@@ -932,7 +949,7 @@ describe("split Postgres repositories", () => {
             [
                 {
                     running_tasks: [{ id: "pending-one", kind: "video", source: "agent", title: "生成短片", createdAt: timestamp }],
-                    recent_assets: [{ id: "success-one-0", kind: "image", title: "商品图", url: "/api/media/image.webp", createdAt: timestamp }],
+                    recent_assets: [{ id: "success-one-0", kind: "image", title: "商品图", storageKey: "permanent/image.webp", createdAt: timestamp }],
                 },
             ],
         ]);
@@ -941,7 +958,7 @@ describe("split Postgres repositories", () => {
 
         expect(overview).toEqual({
             runningTasks: [{ id: "pending-one", kind: "video", source: "agent", title: "生成短片", createdAt: timestamp }],
-            recentAssets: [{ id: "success-one-0", kind: "image", title: "商品图", url: "/api/media/image.webp", createdAt: timestamp }],
+            recentAssets: [{ id: "success-one-0", kind: "image", title: "商品图", storageKey: "permanent/image.webp", displayUrl: "/api/generation-log-assets/permanent/image.webp", createdAt: timestamp }],
         });
         expect(query).toHaveBeenCalledTimes(1);
         const [statement, params] = queryArgs(query, 0);

@@ -109,6 +109,7 @@ export function mapPublishedGalleryItem(row: Record<string, unknown>): Published
         authorAvatarStorageKey: optionalString(row.owner_avatar_storage_key),
         authorAvatarUpdatedAt: optionalIso(row.owner_avatar_updated_at),
         assetId: optionalString(row.asset_id),
+        assetStorageKey: optionalString(row.asset_storage_key),
         assetMediaType: mediaType === "image" || mediaType === "video" || mediaType === "audio" ? mediaType : undefined,
         assetMimeType: optionalString(row.asset_mime_type),
     };

@@ -48,6 +48,54 @@ describe("user media cascade deletion", () => {
         expect(files[1]).toMatchObject({ projects: [{ project: { backgroundMode: "lines", nodes: [{ id: "text-one" }], connections: [] } }] });
     });
 
+    it("keeps a durable pending record when OSS deletion fails and removes it after maintenance retry", async () => {
+        const storageKey = "permanent/2026/08/21/images/retry.png";
+        const mediaUrl = `/api/reference-assets/${storageKey}`;
+        await seedFiles(storageKey, mediaUrl);
+        mocks.deleteExternalMediaObject.mockRejectedValueOnce(new Error("R2 timeout"));
+        const { deleteUserMediaAssetsCascade } = await import("./user-media-deletion-service");
+        const storage = await import("./local-media-storage");
+
+        const first = await deleteUserMediaAssetsCascade("user-one", [storageKey]);
+
+        expect(first).toMatchObject({ deletedFiles: 0, pending: [{ storageKey }] });
+        const pendingRegistry = (await readJson("local-media-assets.json")) as { assets: Array<Record<string, unknown>> };
+        expect(pendingRegistry.assets).toEqual([expect.objectContaining({ storageKey, deletionStatus: "pending", deletionAttempts: 1, deletionLastError: "R2 timeout" })]);
+        expect(JSON.stringify(await readJson("creative-runtime.json"))).not.toContain(storageKey);
+
+        mocks.deleteExternalMediaObject.mockResolvedValueOnce(true);
+        await expect(storage.retryPendingLocalMediaDeletions(10)).resolves.toMatchObject({ deletedFiles: 1, pending: [] });
+        expect((await readJson("local-media-assets.json")) as { assets: unknown[] }).toEqual({ version: 1, assets: [] });
+    });
+
+    it("routes an administrator media id through registered object deletion", async () => {
+        const storageKey = "permanent/2026/08/21/images/admin-delete.png";
+        const registration = {
+            storageKey,
+            scope: "generation",
+            storageClass: "permanent",
+            type: "image",
+            ownerUserId: "user-one",
+            source: "image-generation",
+            mimeType: "image/png",
+            bytes: 12,
+            storageProvider: "object",
+            externalStorageId: "default",
+            externalObjectKey: `paisi-art/images/generation/${storageKey}`,
+            deletionStatus: "active",
+            deletionAttempts: 0,
+            createdAt: "2026-08-21T00:00:00.000Z",
+        };
+        await writeJson("local-media-assets.json", { version: 1, assets: [registration] });
+        const storage = await import("./local-media-storage");
+        const id = Buffer.from(JSON.stringify({ scope: "generation", relativePath: storageKey }), "utf8").toString("base64url");
+
+        await expect(storage.deleteLocalMediaAssets([id])).resolves.toMatchObject({ deletedFiles: 1, pending: [] });
+
+        expect(mocks.deleteExternalMediaObject).toHaveBeenCalledWith(expect.objectContaining({ storageKey, externalObjectKey: registration.externalObjectKey }));
+        expect(await readJson("local-media-assets.json")).toEqual({ version: 1, assets: [] });
+    });
+
     it("preserves another user's references and blocks OSS deletion", async () => {
         const storageKey = "permanent/2026/08/21/images/shared-across-users.png";
         const mediaUrl = `/api/reference-assets/${storageKey}`;

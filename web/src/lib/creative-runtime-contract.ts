@@ -62,6 +62,8 @@ export type CreativeAsset = {
     storageKey?: string;
     remoteUrl?: string;
     serverUrl?: string;
+    displayUrl?: string;
+    thumbnailUrl?: string;
     mimeType?: string;
     width?: number;
     height?: number;

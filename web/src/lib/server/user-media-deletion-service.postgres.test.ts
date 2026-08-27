@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
     ensurePostgresSchema: vi.fn(),
     query: vi.fn(),
     getLocalMediaRegistrations: vi.fn(),
+    markLocalMediaDeletionPending: vi.fn(),
     deleteRegisteredLocalMediaSnapshots: vi.fn(),
 }));
 
@@ -14,7 +15,7 @@ vi.mock("@/lib/server/database", () => ({
     getDatabaseProvider: () => "postgres",
     withPostgresTransaction: (callback: (client: typeof executor) => unknown) => callback(executor),
 }));
-vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.getLocalMediaRegistrations }));
+vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.getLocalMediaRegistrations, markLocalMediaDeletionPending: mocks.markLocalMediaDeletionPending }));
 vi.mock("@/lib/server/local-media-storage", () => ({ deleteRegisteredLocalMediaSnapshots: mocks.deleteRegisteredLocalMediaSnapshots }));
 
 import { deleteUserMediaAssetsCascade } from "./user-media-deletion-service";
@@ -39,6 +40,7 @@ describe("user media cascade deletion PostgreSQL boundary", () => {
             },
         ]);
         mocks.query.mockResolvedValue({ rows: [], rowCount: 0 });
+        mocks.markLocalMediaDeletionPending.mockResolvedValue([]);
         mocks.deleteRegisteredLocalMediaSnapshots.mockResolvedValue({ deletedFiles: 1, deletedBytes: 4, blocked: [] });
     });
 
@@ -46,6 +48,7 @@ describe("user media cascade deletion PostgreSQL boundary", () => {
         await expect(deleteUserMediaAssetsCascade("user-one", ["permanent/one.png"])).resolves.toMatchObject({ deletedFiles: 1, blocked: [] });
 
         expect(mocks.getLocalMediaRegistrations).toHaveBeenCalledWith(["permanent/one.png"], { ownerUserId: "user-one", executor, forUpdate: true });
+        expect(mocks.markLocalMediaDeletionPending).toHaveBeenCalledWith(["permanent/one.png"], { executor });
         const searchCalls = mocks.query.mock.calls.filter(([sql]) =>
             /creative_assets|creative_messages|library_assets|canvas_projects|drama_projects|drama_project_versions|generation_log_assets|generation_logs|generation_tasks|published_work_assets|users/.test(String(sql)),
         );
@@ -54,6 +57,9 @@ describe("user media cascade deletion PostgreSQL boundary", () => {
             expect(String(sql)).toMatch(/user_id|owner_user_id|conversation\.user_id|log\.user_id|work\.owner_user_id|WHERE id = \$1/);
             expect(params[0]).toBe("user-one");
         }
+        const generationAssetDelete = searchCalls.find(([sql]) => String(sql).includes("DELETE FROM generation_log_assets"));
+        expect(String(generationAssetDelete?.[0])).toContain("asset.storage_key = ANY($2::text[])");
+        expect(String(generationAssetDelete?.[0])).not.toMatch(/\b(?:url|remote_url|server_url)\b/);
         expect(mocks.query.mock.calls.map(([sql]) => String(sql)).join("\n")).not.toMatch(/SELECT\s+\*\s+FROM\s+(creative_assets|library_assets|canvas_projects|drama_projects|generation_logs|generation_tasks)/i);
         expect(mocks.deleteRegisteredLocalMediaSnapshots).toHaveBeenCalledWith([expect.objectContaining({ storageKey: "permanent/one.png", externalObjectKey: "vozeb-pro/media/reference/permanent/one.png" })]);
     });

@@ -26,7 +26,11 @@ export type CreateOverviewTask = {
     status?: "planning" | "running" | "paused";
 };
 
-export type CreateOverviewAsset = CreateOverviewMedia & {
+export type CreateOverviewAsset = {
+    kind: "image" | "video";
+    storageKey: string;
+    displayUrl: string;
+    thumbnailUrl?: string;
     id: string;
     title: string;
     createdAt: string;

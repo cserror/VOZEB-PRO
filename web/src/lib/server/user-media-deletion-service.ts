@@ -4,7 +4,7 @@ import { ensurePostgresSchema, getDatabaseProvider, withPostgresTransaction, typ
 import type { RuntimeFileDatabase } from "@/lib/server/creative-runtime-repository";
 import type { GenerationLogDatabase } from "@/lib/server/generation-log-types";
 import type { StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
-import { getLocalMediaRegistrations, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
+import { getLocalMediaRegistrations, markLocalMediaDeletionPending, type LocalMediaRegistration } from "@/lib/server/local-media-registry";
 import { deleteRegisteredLocalMediaSnapshots } from "@/lib/server/local-media-storage";
 import { cleanCanvasProjectMediaReferences, cleanUserMediaReferences, containsUserMediaReference } from "@/lib/server/user-media-reference-cleanup";
 
@@ -33,6 +33,7 @@ async function cleanPostgresReferences(userId: string, storageKeys: string[]) {
         const keys = registrations.map((item) => item.storageKey);
         if (!keys.length) return { registrations, removedReferences: 0 };
         const removedReferences = await removePostgresReferences(client, userId, keys);
+        await markLocalMediaDeletionPending(keys, { executor: client });
         return { registrations, removedReferences };
     });
 }
@@ -100,7 +101,7 @@ async function removePostgresReferences(client: QueryExecutor, userId: string, s
          USING generation_logs log
          WHERE asset.generation_log_id = log.id
            AND log.user_id = $1
-           AND ${matchesJsonColumns("asset", ["url", "server_url", "remote_url"])}
+           AND asset.storage_key = ANY($2::text[])
          RETURNING asset.generation_log_id`,
         [userId, storageKeys],
     );
@@ -278,7 +279,12 @@ function cleanFileState(state: Awaited<ReturnType<typeof readFileState>>, userId
               return cleaned.value;
           })
         : state.auth.users;
-    return { state: { ...state, runtime, library, canvas, drama, logs, tasks, auth: { ...state.auth, users } }, removedReferences };
+    const requestedAt = new Date().toISOString();
+    const media = {
+        ...state.media,
+        assets: state.media.assets.map((asset) => (storageKeys.includes(asset.storageKey) ? { ...asset, deletionStatus: "pending" as const, deletionRequestedAt: asset.deletionRequestedAt || requestedAt } : asset)),
+    };
+    return { state: { ...state, runtime, library, canvas, drama, logs, tasks, media, auth: { ...state.auth, users } }, removedReferences };
 
     function cleanCounted<T>(value: T, keys: string[], ids: string[]) {
         const cleaned = cleanUserMediaReferences(value, keys, ids);
@@ -318,6 +324,7 @@ function fileStateEntries(state: Awaited<ReturnType<typeof readFileState>>) {
         "generation-logs.json": state.logs,
         "generation-tasks.json": state.tasks,
         "library-assets.json": state.library,
+        "local-media-assets.json": state.media,
     };
 }
 
@@ -343,5 +350,5 @@ function normalizeKeys(values: string[]) {
 }
 
 function emptyResult() {
-    return { deletedFiles: 0, deletedBytes: 0, blocked: [] as Array<{ id: string; storageKey: string; referenceCount: number }>, removedReferences: 0 };
+    return { deletedFiles: 0, deletedBytes: 0, blocked: [] as Array<{ id: string; storageKey: string; referenceCount: number }>, pending: [] as Array<{ id: string; storageKey: string }>, removedReferences: 0 };
 }

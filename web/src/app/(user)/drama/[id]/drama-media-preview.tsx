@@ -4,6 +4,7 @@ import { Modal } from "antd";
 import { Film, ImageIcon, ScanSearch } from "lucide-react";
 
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 
 export type DramaPreviewMedia = { type: "image" | "video"; url: string; title: string };
 
@@ -16,9 +17,9 @@ export function DramaMediaThumbnail({ media, onOpen }: { media: DramaPreviewMedi
             aria-label={`查看${media.type === "image" ? "图片" : "视频"}：${media.title}`}
         >
             {media.type === "image" ? (
-                <img className="size-full object-cover transition group-hover:scale-[1.02]" src={imagePreviewUrl(media.url, 640)} alt={media.title} />
+                <img className="size-full object-cover transition group-hover:scale-[1.02]" src={imagePreviewUrl(media.url, 640)} alt={media.title} loading="lazy" decoding="async" />
             ) : (
-                <video className="pointer-events-none size-full object-cover" src={media.url} muted playsInline preload="metadata" />
+                <LazyMediaVideo className="pointer-events-none size-full object-cover" src={media.url} muted playsInline preload="metadata" />
             )}
             <span className="absolute inset-0 grid place-items-center bg-black/0 text-white opacity-0 transition group-hover:bg-black/25 group-hover:opacity-100 group-focus-visible:bg-black/25 group-focus-visible:opacity-100">
                 <ScanSearch className="size-5 drop-shadow" />

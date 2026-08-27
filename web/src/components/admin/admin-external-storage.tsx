@@ -19,6 +19,7 @@ export function AdminExternalStorage() {
     const { message } = App.useApp();
     const [form] = Form.useForm<ObjectStorageSettingsUpdate>();
     const enabled = Form.useWatch("enabled", form);
+    const imageDeliveryProvider = Form.useWatch("imageDeliveryProvider", form);
     const [settings, setSettings] = useState<ObjectStorageSettings>();
     const [files, setFiles] = useState<ExternalStorageFilesPayload>();
     const [loadingSettings, setLoadingSettings] = useState(true);
@@ -66,6 +67,8 @@ export function AdminExternalStorage() {
                     region: value.region,
                     bucket: value.bucket,
                     prefix: value.prefix,
+                    publicBaseUrl: value.publicBaseUrl,
+                    imageDeliveryProvider: value.imageDeliveryProvider,
                     forcePathStyle: value.forcePathStyle,
                     accessKeyId: "",
                     secretAccessKey: "",
@@ -145,7 +148,8 @@ export function AdminExternalStorage() {
             setDeleting(true);
             try {
                 const result = await deleteExternalStorageFiles(keys);
-                if (result.blocked.length) message.warning(`${result.blocked.length} 个对象仍被业务记录引用，已保留`);
+                if (result.pending.length) message.warning(`${result.pending.length} 个对象删除失败，已进入维护重试`);
+                else if (result.blocked.length) message.warning(`${result.blocked.length} 个对象仍被业务记录引用，已保留`);
                 else message.success(`已删除 ${result.deleted} 个对象`);
                 await loadFiles(cursor, prefix, type, source, ownerUserId);
             } catch (error) {
@@ -196,6 +200,11 @@ export function AdminExternalStorage() {
                 render: (_, file) => (
                     <div className="space-y-1 text-xs">
                         <Tag color={file.storageKey ? "green" : "default"}>{file.storageKey ? "业务媒体" : file.variant ? "预览变体" : "独立对象"}</Tag>
+                        {file.deletionStatus === "pending" ? (
+                            <div title={file.deletionLastError}>
+                                <Tag color="warning">待删除{file.deletionAttempts ? ` · ${file.deletionAttempts} 次失败` : ""}</Tag>
+                            </div>
+                        ) : null}
                         {file.referenceCount ? <div className="text-zinc-500">引用 {file.referenceCount}</div> : null}
                     </div>
                 ),
@@ -222,8 +231,14 @@ export function AdminExternalStorage() {
                     <div className="flex justify-end gap-1">
                         <Button type="text" shape="circle" aria-label="预览对象" icon={<Eye className="size-4" />} onClick={() => setPreview(file)} />
                         <Button type="text" shape="circle" aria-label="下载对象" icon={<Download className="size-4" />} href={file.downloadUrl} target="_blank" />
-                        <Popconfirm title="删除这个外部存储对象？" description="仍被业务记录引用时会自动保留。" okText="删除" cancelText="取消" onConfirm={() => void remove([file.key])}>
-                            <Button danger type="text" shape="circle" aria-label="删除对象" icon={<Trash2 className="size-4" />} />
+                        <Popconfirm
+                            title={file.deletionStatus === "pending" ? "立即重试删除这个对象？" : "删除这个外部存储对象？"}
+                            description="仍被业务记录引用时会自动保留。"
+                            okText={file.deletionStatus === "pending" ? "重试删除" : "删除"}
+                            cancelText="取消"
+                            onConfirm={() => void remove([file.key])}
+                        >
+                            <Button danger type="text" shape="circle" aria-label={file.deletionStatus === "pending" ? "重试删除对象" : "删除对象"} icon={<Trash2 className="size-4" />} />
                         </Popconfirm>
                     </div>
                 ),
@@ -287,6 +302,27 @@ export function AdminExternalStorage() {
                                 </Form.Item>
                                 <Form.Item label="对象路径前缀" name="prefix" className="!mb-5 xl:col-span-3" rules={[{ required: true, message: "请输入路径前缀" }]}>
                                     <Input placeholder="vozeb-pro" />
+                                </Form.Item>
+                                <Form.Item label="图片交付方式" name="imageDeliveryProvider" className="!mb-5 xl:col-span-3">
+                                    <Select
+                                        options={[
+                                            { value: "none", label: "站内 / 对象存储原有方式" },
+                                            { value: "cloudflare", label: "Cloudflare 动态图片" },
+                                        ]}
+                                    />
+                                </Form.Item>
+                                <Form.Item
+                                    label="媒体公开域名"
+                                    name="publicBaseUrl"
+                                    className="!mb-5 xl:col-span-3"
+                                    extra="Cloudflare 模式必填。图片展示使用 640/1280 两档动态变体，公开视频和音频使用原件地址；下载与业务引用仍走站内接口。"
+                                    rules={[
+                                        { required: enabled && imageDeliveryProvider === "cloudflare", message: "请输入媒体公开域名" },
+                                        { type: "url", message: "请输入完整的 HTTPS 地址" },
+                                        { pattern: /^https:\/\//i, message: "媒体公开域名必须使用 HTTPS" },
+                                    ]}
+                                >
+                                    <Input placeholder="https://img.example.com" />
                                 </Form.Item>
                                 <Form.Item label="Path-style 模式" name="forcePathStyle" valuePropName="checked" className="!mb-5 xl:col-span-3">
                                     <Switch size="small" aria-label="切换 Path-style 模式" />
@@ -452,6 +488,11 @@ export function AdminExternalStorage() {
                                     <div className="mt-1 text-xs text-zinc-500">
                                         {managedMediaTypeLabel(file.type)} · {formatBytes(file.bytes)} · {file.storageKey ? `引用 ${file.referenceCount}` : file.variant ? "预览变体" : "独立对象"}
                                     </div>
+                                    {file.deletionStatus === "pending" ? (
+                                        <div className="mt-1 text-xs text-amber-600 dark:text-amber-300" title={file.deletionLastError}>
+                                            待删除{file.deletionAttempts ? ` · ${file.deletionAttempts} 次失败` : ""}
+                                        </div>
+                                    ) : null}
                                     <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-zinc-500">
                                         <span className="truncate">{file.ownerDisplayName || file.ownerUsername || (file.ownerUserId ? "用户信息不可用" : "未登记")}</span>
                                         <AdminAccountId accountId={file.ownerAccountId} className="shrink-0" />
@@ -461,8 +502,14 @@ export function AdminExternalStorage() {
                                 </div>
                                 <div className="flex shrink-0 flex-col gap-0.5">
                                     <Button type="text" shape="circle" aria-label="下载对象" icon={<Download className="size-4" />} href={file.downloadUrl} target="_blank" />
-                                    <Popconfirm title="删除这个外部存储对象？" description="仍被业务记录引用时会自动保留。" okText="删除" cancelText="取消" onConfirm={() => void remove([file.key])}>
-                                        <Button danger type="text" shape="circle" aria-label="删除对象" icon={<Trash2 className="size-4" />} />
+                                    <Popconfirm
+                                        title={file.deletionStatus === "pending" ? "立即重试删除这个对象？" : "删除这个外部存储对象？"}
+                                        description="仍被业务记录引用时会自动保留。"
+                                        okText={file.deletionStatus === "pending" ? "重试删除" : "删除"}
+                                        cancelText="取消"
+                                        onConfirm={() => void remove([file.key])}
+                                    >
+                                        <Button danger type="text" shape="circle" aria-label={file.deletionStatus === "pending" ? "重试删除对象" : "删除对象"} icon={<Trash2 className="size-4" />} />
                                     </Popconfirm>
                                 </div>
                             </div>

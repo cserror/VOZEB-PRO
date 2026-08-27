@@ -26,6 +26,10 @@ export type LocalMediaAsset = {
     projectId?: string;
     mimeType?: string;
     referenceCount: number;
+    deletionStatus?: "active" | "pending";
+    deletionRequestedAt?: string;
+    deletionAttempts?: number;
+    deletionLastError?: string;
 };
 
 export type LocalMediaStoragePayload = {

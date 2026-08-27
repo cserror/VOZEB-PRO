@@ -478,11 +478,18 @@ ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS storage_provider text NO
 ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS external_storage_id text;
 ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS external_object_key text;
 ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS external_synced_at timestamptz;
+ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS deletion_status text NOT NULL DEFAULT 'active';
+ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS deletion_requested_at timestamptz;
+ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS deletion_attempts integer NOT NULL DEFAULT 0;
+ALTER TABLE local_media_assets ADD COLUMN IF NOT EXISTS deletion_last_error text;
 
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'local_media_assets_storage_provider_check') THEN
         ALTER TABLE local_media_assets ADD CONSTRAINT local_media_assets_storage_provider_check CHECK (storage_provider IN ('local', 'object'));
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'local_media_assets_deletion_status_check') THEN
+        ALTER TABLE local_media_assets ADD CONSTRAINT local_media_assets_deletion_status_check CHECK (deletion_status IN ('active', 'pending'));
     END IF;
 END;
 $$;
@@ -490,6 +497,7 @@ $$;
 CREATE INDEX IF NOT EXISTS local_media_assets_external_object_idx ON local_media_assets (external_storage_id, external_object_key) WHERE external_object_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS local_media_assets_local_created_idx ON local_media_assets (created_at DESC) WHERE storage_provider = 'local';
 CREATE INDEX IF NOT EXISTS local_media_assets_local_filter_idx ON local_media_assets (storage_class, type, created_at DESC) WHERE storage_provider = 'local';
+CREATE INDEX IF NOT EXISTS local_media_assets_pending_deletion_idx ON local_media_assets (deletion_requested_at ASC, storage_key ASC) WHERE deletion_status = 'pending';
 
 CREATE TABLE IF NOT EXISTS object_storage_settings (
     id text PRIMARY KEY DEFAULT 'default',
@@ -498,13 +506,27 @@ CREATE TABLE IF NOT EXISTS object_storage_settings (
     region text NOT NULL DEFAULT 'us-east-1',
     bucket text NOT NULL DEFAULT '',
     prefix text NOT NULL DEFAULT 'vozeb-pro',
+    public_base_url text NOT NULL DEFAULT '',
+    image_delivery_provider text NOT NULL DEFAULT 'none',
     access_key_id_ciphertext text NOT NULL DEFAULT '',
     secret_access_key_ciphertext text NOT NULL DEFAULT '',
     force_path_style boolean NOT NULL DEFAULT false,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT object_storage_settings_singleton CHECK (id = 'default')
+    CONSTRAINT object_storage_settings_singleton CHECK (id = 'default'),
+    CONSTRAINT object_storage_settings_image_delivery_provider_check CHECK (image_delivery_provider IN ('none', 'cloudflare'))
 );
+
+ALTER TABLE object_storage_settings ADD COLUMN IF NOT EXISTS public_base_url text NOT NULL DEFAULT '';
+ALTER TABLE object_storage_settings ADD COLUMN IF NOT EXISTS image_delivery_provider text NOT NULL DEFAULT 'none';
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'object_storage_settings_image_delivery_provider_check') THEN
+        ALTER TABLE object_storage_settings ADD CONSTRAINT object_storage_settings_image_delivery_provider_check CHECK (image_delivery_provider IN ('none', 'cloudflare'));
+    END IF;
+END;
+$$;
 
 INSERT INTO object_storage_settings (id) VALUES ('default') ON CONFLICT (id) DO NOTHING;
 
@@ -954,7 +976,8 @@ CREATE TABLE IF NOT EXISTS generation_log_assets (
     id bigserial PRIMARY KEY,
     generation_log_id text NOT NULL REFERENCES generation_logs(id) ON DELETE CASCADE,
     type text NOT NULL,
-    url text NOT NULL,
+    storage_key text NOT NULL,
+    url text,
     remote_url text,
     server_url text,
     mime_type text,
@@ -964,6 +987,8 @@ CREATE TABLE IF NOT EXISTS generation_log_assets (
     sort_order integer NOT NULL DEFAULT 0,
     CONSTRAINT generation_log_assets_type CHECK (type IN ('image', 'video'))
 );
+ALTER TABLE generation_log_assets ADD COLUMN IF NOT EXISTS storage_key text;
+ALTER TABLE generation_log_assets ALTER COLUMN url DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS generation_log_assets_log_idx ON generation_log_assets (generation_log_id, sort_order);
 

@@ -3,6 +3,8 @@
 import { ChevronDown, ChevronUp, FileAudio, FileText, FileVideo, ImageIcon, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
+import { creativeAssetDisplayUrl, creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
@@ -114,8 +116,8 @@ function TypeTab({ type, count, active, onClick }: { type: "image" | "video"; co
 }
 
 function AssetPreview({ asset }: { asset: CreativeAsset }) {
-    const url = asset.serverUrl || asset.remoteUrl;
-    if (asset.type === "image" && url) return <img src={imagePreviewUrl(url, 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />;
+    const url = creativeAssetDisplayUrl(asset);
+    if (asset.type === "image" && url) return <img src={imagePreviewUrl(creativeAssetThumbnailUrl(asset), 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />;
     const coverUrl = asset.type === "video" && typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : "";
     if (asset.type === "video") return <VideoAssetPreview url={url} coverUrl={coverUrl} />;
     const Icon = asset.type === "audio" ? FileAudio : asset.type === "text" ? FileText : ImageIcon;
@@ -134,7 +136,9 @@ function VideoAssetPreview({ url, coverUrl }: { url?: string; coverUrl: string }
     return (
         <>
             {showCover ? <img src={imagePreviewUrl(coverUrl, 240)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={() => setCoverFailed(true)} /> : null}
-            {showVideo ? <video src={url} muted playsInline preload="metadata" aria-hidden="true" className="size-full bg-black object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={() => setVideoFailed(true)} /> : null}
+            {showVideo ? (
+                <LazyMediaVideo src={url!} muted playsInline preload="metadata" aria-hidden="true" className="size-full bg-black object-cover transition-transform duration-200 group-hover:scale-[1.03]" onError={() => setVideoFailed(true)} />
+            ) : null}
             {!showCover && !showVideo ? (
                 <span className="grid size-full place-items-center text-[#66717e] dark:text-[#aab3bf]">
                     <FileVideo className="size-5" />

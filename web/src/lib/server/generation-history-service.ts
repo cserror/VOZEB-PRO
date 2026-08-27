@@ -19,7 +19,9 @@ import { deleteGenerationLogs } from "@/lib/server/generation-log-store";
 import { deleteGenerationLogResultsForUser, deleteLegacyGenerationLogAssetsForUser, GenerationLogOwnershipError } from "@/lib/server/generation-log-task-service";
 import { getStoredGenerationTaskRecordsByIds, type StoredGenerationTaskRecord } from "@/lib/server/generation-task-store";
 import { createLibraryAssetIfAbsent, listLibraryGenerationResultIds } from "@/lib/server/library-asset-store";
-import { localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
+import { mediaRouteUrl } from "@/lib/media-route-url";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 export type GenerationHistoryListInput = {
     page?: unknown;
@@ -51,9 +53,9 @@ export async function addGenerationHistoryResultToLibrary(userId: string, result
     if (!identity) throw new GenerationHistoryServiceError("生成结果不存在", 404);
     const record = await getResultRecord(userId, identity);
     if (!record || record.status !== "success" || !record.asset) throw new GenerationHistoryServiceError("只有已完成的图片或视频可以添加到素材", 409);
-    const url = record.asset.serverUrl || record.asset.url;
-    const storageKey = localMediaStorageKeyFromValue(url) || localMediaStorageKeyFromValue(record.asset.url);
-    if (!storageKey || !url) throw new GenerationHistoryServiceError("该生成结果没有可复用的站内媒体", 409);
+    const storageKey = record.asset.storageKey;
+    if (!storageKey) throw new GenerationHistoryServiceError("该生成结果没有可复用的站内媒体", 409);
+    const url = mediaRouteUrl("generation", storageKey);
 
     const now = new Date().toISOString();
     const id = `generation-result-${createHash("sha256").update(`${userId}\0${resultId}`).digest("hex").slice(0, 32)}`;
@@ -71,17 +73,17 @@ export async function addGenerationHistoryResultToLibrary(userId: string, result
     const media = {
         storageKey,
         serverUrl: url,
-        remoteUrl: record.asset.remoteUrl,
         bytes: record.asset.bytes || 0,
         mimeType: record.asset.mimeType || (record.kind === "video" ? "video/mp4" : "image/png"),
         width: record.asset.width || 0,
         height: record.asset.height || 0,
     };
-    const asset =
-        record.kind === "image"
-            ? await createLibraryAssetIfAbsent(userId, { ...base, kind: "image", data: { ...media, dataUrl: url } })
-            : await createLibraryAssetIfAbsent(userId, { ...base, kind: "video", data: { ...media, url } });
-    return asset;
+    try {
+        return record.kind === "image" ? await createLibraryAssetIfAbsent(userId, { ...base, kind: "image", data: { ...media, dataUrl: url } }) : await createLibraryAssetIfAbsent(userId, { ...base, kind: "video", data: { ...media, url } });
+    } catch (error) {
+        if (error instanceof MediaReferenceWriteConflict) throw new GenerationHistoryServiceError(error.message, error.status);
+        throw error;
+    }
 }
 
 export async function deleteGenerationHistoryResultsForUser(userId: string, resultIds: string[]) {
@@ -211,11 +213,15 @@ async function enrichResultPage(userId: string, page: { items: GenerationHistory
         ),
     );
     const ids = page.items.map((item) => generationHistoryResultId(item));
-    const [runRecords, conversations, userMessages, addedResultIds] = await Promise.all([
+    const [runRecords, conversations, userMessages, addedResultIds, mediaUrls] = await Promise.all([
         getStoredGenerationTaskRecordsByIds(userId, runIds),
         getCreativeConversationsByIds(userId, conversationIds),
         getCreativeUserMessagesByRunIds(userId, runIds),
         listLibraryGenerationResultIds(userId, ids),
+        resolveMediaDisplayUrls(
+            page.items.flatMap((item) => (item.asset?.storageKey ? [item.asset.storageKey] : [])),
+            { thumbnailWidth: 640 },
+        ),
     ]);
     const runById = new Map(runRecords.map((task) => [task.id, task]));
     const conversationById = new Map(conversations.map((conversation) => [conversation.id, conversation]));
@@ -239,7 +245,7 @@ async function enrichResultPage(userId: string, page: { items: GenerationHistory
             const originalPrompt = record.originalPrompt || text(task?.userPrompt) || text(object(task?.payload).userPrompt) || text(runPayload.publicPrompt) || text(userMessage?.content);
             const optimizedPrompt = text(plannedTask?.optimizedPrompt) || undefined;
             const parameters = Object.keys(record.parameters).length ? cleanParameters(record.parameters) : taskPublicParameters(task);
-            const assetUrl = record.asset?.serverUrl || record.asset?.url || "";
+            const media = record.asset ? mediaUrls.get(record.asset.storageKey) : undefined;
             return {
                 id,
                 logId: record.logId,
@@ -257,12 +263,13 @@ async function enrichResultPage(userId: string, page: { items: GenerationHistory
                 conversationId: effectiveConversationId,
                 projectId,
                 continueHref: continueHref(record.source, conversation?.id, conversation?.surface, projectId),
-                asset: record.asset
-                    ? {
-                          ...record.asset,
-                          storageKey: localMediaStorageKeyFromValue(assetUrl) || localMediaStorageKeyFromValue(record.asset.url) || undefined,
-                      }
-                    : undefined,
+                asset:
+                    record.asset && media
+                        ? {
+                              ...record.asset,
+                              ...media,
+                          }
+                        : undefined,
                 error: record.error,
                 durationMs: record.durationMs,
                 createdAt: record.createdAt,
@@ -283,7 +290,9 @@ async function getResultRecord(userId: string, identity: GenerationHistoryResult
         log = (await readGenerationLogDb()).logs.find((item) => item.userId === userId && item.id === identity.logId) || null;
     }
     if (!log) return null;
-    return resultRecordsFromLog(log).find((record) => (identity.slotId ? record.slotId === identity.slotId : identity.assetIndex !== undefined ? !record.slotId && record.assetIndex === identity.assetIndex : !record.slotId && record.assetIndex === undefined));
+    return resultRecordsFromLog(log).find((record) =>
+        identity.slotId ? record.slotId === identity.slotId : identity.assetIndex !== undefined ? !record.slotId && record.assetIndex === identity.assetIndex : !record.slotId && record.assetIndex === undefined,
+    );
 }
 
 function normalizeListInput(input: GenerationHistoryListInput): NormalizedListInput {

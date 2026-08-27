@@ -28,12 +28,12 @@ export class WorkGovernanceRepository {
                     CASE WHEN version.author_display = 'hidden' THEN NULL ELSE version.author_name END AS author_name,
                     owner.username AS author_username,
                     owner.avatar_storage_key AS owner_avatar_storage_key, owner.updated_at AS owner_avatar_updated_at,
-                    preview.id AS asset_id, preview.media_type AS asset_media_type, preview.mime_type AS asset_mime_type
+                    preview.id AS asset_id, preview.storage_key AS asset_storage_key, preview.media_type AS asset_media_type, preview.mime_type AS asset_mime_type
              FROM published_works work
              JOIN published_work_versions version ON version.id = work.published_version_id
              JOIN users owner ON owner.id = work.owner_user_id AND owner.status = 'active'
              LEFT JOIN LATERAL (
-                 SELECT asset.id, asset.media_type, asset.mime_type
+                 SELECT asset.id, asset.storage_key, asset.media_type, asset.mime_type
                  FROM published_work_assets asset
                  WHERE asset.version_id = version.id AND asset.media_type IN ('image', 'video')
                  ORDER BY CASE WHEN asset.role = 'cover' THEN 0 ELSE 1 END, asset.sort_order, asset.id

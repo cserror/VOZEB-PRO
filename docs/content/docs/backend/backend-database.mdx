@@ -39,7 +39,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 
 - `vozeb_pro_schema_migrations`：已应用的数据库结构版本。
 - `vozeb_pro_app_settings`：站点、注册、邮箱、积分、生成、支付配置、逻辑模型目录、渠道绑定和默认模型等全局设置；`logical_models` JSONB 保存用户可见模型及其能力、上游模型、渠道、启用状态和优先级，`generation_cost_control` JSONB 保存管理员配置的单任务、单用户每日和全站每日积分成本上限，三个值为 `0` 时均表示不限制；`data_lifecycle` JSONB 保存四类技术到期清理开关和单类批次大小，不承载对话、支付、审计等长期业务数据的法律保留期限。
-- `vozeb_pro_object_storage_settings`：S3 兼容外部存储单例配置，保存启用状态、Endpoint、Region、Bucket、对象前缀、path-style 模式及加密后的 Access Key/Secret Key；管理接口只返回密钥是否已配置，不回传明文。
+- `vozeb_pro_object_storage_settings`：S3 兼容外部存储单例配置，保存启用状态、Endpoint、Region、Bucket、对象前缀、图片交付方式、可选媒体公开域名、path-style 模式及加密后的 Access Key/Secret Key；只有选择 Cloudflare 动态图片时才要求无路径的 HTTPS 公开域名，管理接口只返回密钥是否已配置，不回传明文。
 - `vozeb_pro_system_model_channels`：系统模型渠道、分别加密保存的 API Key 与渠道生成回调密钥、模型列表和高级配置；后台不保存渠道验证记录。
 - `vozeb_pro_entitlement_plans`：商业套餐权益、每日额度、调用限制和功能标记；新用户不再通过套餐获得注册初始积分。
 - `vozeb_pro_users`：用户账号、角色、状态、头像存储键、最多 160 字的个人简介、当前套餐、积分余额和密码哈希；`admin_permissions` JSONB 保存管理员的显式职责列表，并由 CHECK 约束保证为数组，普通用户保持空数组。管理员 TOTP MFA 使用 `mfa_secret_ciphertext` 保存 AES-GCM 密文，`mfa_enabled_at` 表示已完成验证并启用，CHECK 约束禁止启用时间存在但密文缺失。公开注册还原子保存当时的服务条款版本/链接、隐私政策版本/链接和同意时间，五个留痕字段必须同时为空或同时存在。管理员代建账号不伪造用户同意记录。公开创作者接口只按用户名返回允许公开的资料字段，不暴露邮箱、内部用户 ID、职责、MFA 密文或协议留痕。
@@ -68,7 +68,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_cdk_codes` / `vozeb_pro_cdk_redemptions`：CDK 和兑换记录。新 CDK 使用同一条记录的完整 UUID 生成稳定密钥，不再预查并执行固定次数的随机碰撞重试；PostgreSQL 后台列表使用数据库侧的关键词、状态筛选、聚合统计和分页，只读取当前页兑换明细，文件 Provider 保持相同业务结果。
 - `vozeb_pro_announcements`：站内公告。
 - `vozeb_pro_prompts` / `vozeb_pro_prompt_seed_sources`：公共提示词、用户提示词和种子来源。
-- `vozeb_pro_generation_logs` / `vozeb_pro_generation_log_assets`：图片/视频生成日志和结果资源地址；工作台日志通过 `conversation_id` 关联可恢复的 Agent 对话，`created_at` 独立索引用于后台近 7 日运营聚合，避免读取日志正文和媒体资产。
+- `vozeb_pro_generation_logs` / `vozeb_pro_generation_log_assets`：图片/视频生成日志及结果媒体引用；非空 `storage_key` 是生成媒体的唯一业务身份，旧 `url/server_url` 列不再参与业务读写，URL-only 历史记录不兼容且不会展示。工作台日志通过 `conversation_id` 关联可恢复的 Agent 对话，`created_at` 独立索引用于后台近 7 日运营聚合，避免读取日志正文和媒体资产。
 - `vozeb_pro_generation_tasks`：文本、图片、视频、音频、Agent 和短剧整集合成（`render`）异步任务状态，用于跨请求、重启和多实例查询；数据库状态统一为 `pending/running/success/error/paused/cancelled`，各上游或 Agent 的 `planning/completed/failed` 等状态会在写入索引列时归一化，原始状态仍保留在 JSON payload 中。`execution_phase` 独立保存 `created/submitting/submitted/polling/result_ready/persisting/needs_review/review_pending/reviewing/review_unavailable/completed`，并通过 `upstream_task_id/channel_id/provider/query_path`、提交/轮询时间、上游状态、结果载荷、Worker 和租约字段恢复原任务。Agent 普通生成完成后以成功任务进入持久复盘阶段；复盘调用失败会直接记录为不可用，不使用未配置的固定次数重复计费，也不回滚已成功生成结果。表内同时保存 `conversation_id/run_id/surface/project_id/parent_task_id/attempt_no/client_request_id`，用于后台任务中心追踪会话、运行、项目、父任务、尝试次数和幂等请求；到期恢复索引只覆盖非终态且可自动推进的执行阶段。非空 `(channel_id, upstream_task_id)` 唯一，保证可信回调只能精确匹配一条本地任务。
 - `vozeb_pro_generation_concurrency_reservations`：PostgreSQL 多实例生成并发预约。事务只负责按用户和任务类型加 advisory lock、清理过期预约、计算活动任务与尚未物化的预约并写入稳定请求 ID；上游提交和任务创建在事务结束后执行，完成或异常时删除预约。已落库且 `client_request_id` 相同的活动任务不会和预约重复计数。
 - `vozeb_pro_generation_worker_heartbeats`：生成 Worker 的稳定 ID 与最近心跳时间；就绪检查按最近心跳和部署配置的失联窗口判断后台恢复是否可用。
@@ -79,7 +79,7 @@ VOZEB PRO 的 PostgreSQL 真实表名统一使用项目名前缀 `vozeb_pro_`。
 - `vozeb_pro_creative_run_events`：Agent Run 持久事件，使用递增 `bigserial` ID 为 SSE 断线续传提供精确游标；PostgreSQL 事务写入事件后发送 `vozeb_pro_run_events` 通知唤醒其他实例，通知不承载业务数据，丢失时仍从本表恢复。
 - `vozeb_pro_canvas_projects`：Canvas 项目聚合快照，保存用户、标题、创作会话 ID、节点、连线、视口和项目助手会话；列表查询只投影标题、时间和节点/连线计数，进入单项目后才读取完整快照。交互保存按用户、项目、`updatedAt` 和 mutation ID 执行单次条件更新，PostgreSQL 在 JSONB 内按稳定实体 ID 原位合并并保持数组顺序，文件 Provider 在项目锁内应用同一 mutation；幂等标识仅为服务端内部字段，不进入公开项目响应。
 - `vozeb_pro_library_assets`：用户素材库聚合记录，保存文本或服务器媒体引用、标签、来源和备注；不保存媒体 base64，素材页按用户、类型、关键词和页码在服务端裁剪。
-- `vozeb_pro_local_media_assets`：图片、视频和音频的统一媒体登记表，保存稳定站内 `storage_key`、本地/对象存储 Provider、对象存储配置与对象 Key、同步时间、临时/长期分类、用户归属、原文件名、来源、会话/Run/任务/项目关联、MIME、大小和过期时间；媒体读取与删除以该登记和业务引用检查为权限边界。
+- `vozeb_pro_local_media_assets`：图片、视频和音频的统一媒体登记表，保存稳定站内 `storage_key`、本地/对象存储 Provider、对象存储配置与对象 Key、同步时间、临时/长期分类、用户归属、原文件名、来源、会话/Run/任务/项目关联、MIME、大小和过期时间；`deletion_status`、请求时间、失败次数和最近错误组成可恢复的物理删除状态。删除认领会在同一 PostgreSQL 事务中锁定登记、复查全站引用并标记 `pending`；素材库、生成记录、图片编辑任务、视频参考任务、头像、Canvas、短剧、Agent 创作资产和作品新增引用也持有同一登记行锁，避免删除与新增引用并发后留下悬空记录。视频任务只保存稳定 `referenceStorageKeys`，不保存临时签名 URL。本地文件或 R2 对象删除成功后才移除登记。首次物理删除失败后维护任务只自动补一次，仍失败的登记继续保留，后台可查看原因并手动重试。待删除媒体不会再由站内用户、Provider 签名、头像或公开作品接口返回。
 - `vozeb_pro_drama_projects`：短剧项目聚合快照，保存用户、标题、状态和完整 `project_json`；项目内包含创作会话 ID、多集、角色/场景/道具/线索、内容审核状态、分镜及图片、视频、音频、整集合成任务状态，并按用户与更新时间建立列表索引。
 - `vozeb_pro_drama_project_versions`：短剧项目独立版本快照，按项目保存递增版本号、保存原因、完整快照和创建时间；项目或用户删除时级联删除，`(project_id, version)` 保持唯一。
 - `vozeb_pro_published_works`：作品稳定身份，保存所有者、公开 slug、素材/Canvas/短剧来源、当前编辑版本、当前公开版本、生命周期、访问量、精选状态和用户下架时间；slug 忽略大小写唯一，下架或公开版本变化会清除精选状态。
@@ -130,13 +130,15 @@ Agent Run 的状态与任务数组继续保存在 `generation_tasks.payload`，�
 
 `web/src/lib/auth/` 通过用户、Session、设置、积分、CDK、邮箱验证码和公告 Repository 读写对应关系表；文件 Provider 保留相同业务接口和进程内串行 mutation。PostgreSQL 在线路径不再把完整 `AuthDatabase` 删除重写。管理员后台业务操作按 `admin_permissions` 与当前 Session 授权，不进行逐次密码/TOTP 复核；系统渠道 API Key 与管理员 MFA Secret 在数据库中只保存密文。MFA 启用或关闭会保留当前 Session 并撤销该管理员的其他 Session，服务器恢复命令会清除 MFA 并撤销全部 Session。常规业务备份不导出 MFA Secret，导入也不能覆盖服务器当前 MFA 状态。
 
-`web/src/lib/prompts/store.ts` 以及 `web/src/lib/server/` 下的生成日志、统一创作运行时、Canvas 项目、素材库、短剧项目和审计日志 Store 已接入 PostgreSQL。对应 JSON Provider 保留为单机文件部署方式。媒体业务记录始终保存稳定站内路径；读取时按每条媒体登记的 `storage_provider` 选择本地文件或短期对象签名地址，不受当前外部存储开关影响。
+`web/src/lib/prompts/store.ts` 以及 `web/src/lib/server/` 下的生成日志、统一创作运行时、Canvas 项目、素材库、短剧项目和审计日志 Store 已接入 PostgreSQL。对应 JSON Provider 保留为单机文件部署方式。生成记录以 `storageKey` 保存媒体业务身份，不持久化 CDN URL；下载、引用、删除、模型输入和导出按 `storageKey` 使用站内媒体接口。页面展示按媒体登记和当前交付配置动态解析：本地或私有 S3 使用站内接口，Cloudflare 模式下永久图片使用 640/1280 两档动态图片 URL，永久视频和音频使用公开对象 URL，临时参考媒体仍使用站内受控接口。
 
 按用户删除生成日志时，PostgreSQL 使用后台 `data_lifecycle.maintenanceBatchSize` 读取稳定排序批次，在事务内锁定并删除日志，每批提交后再按真实 `storageKey` 重新统计全站引用并清理媒体。管理员永久删除用户前会在同一用户行锁事务内分页锁定并快照该用户媒体登记，避免用户外键级联先删除对象存储定位信息；提交后才使用快照清理本地文件或 S3 对象。订单、邀请奖励、作品发布与治理等受保护商业记录仍遵循各自外键和运营留存规则，不能由媒体快照流程绕过。
 
-作品发布、广场治理和社区互动只在 PostgreSQL Provider 下启用。用户保存草稿、提交审核、编辑驳回稿、下架、重新上架以及管理员通过、驳回、下架都由 `workPublications` Repository 执行所有权校验和事务更新；用户主动下架后只能恢复最近一次已通过且公开可见的版本，管理员下架不能由用户直接恢复。用户或管理员只能在作品下架后永久删除发布主记录、全部版本快照、发布媒体关联、治理案件、通知和点赞，源素材、Canvas/短剧项目及媒体文件保持不变。`workGovernance` 使用稳定游标读取当前 `active + approved + public` 版本，并负责精选、举报、申诉和版本恢复。`workCommunity` 维护点赞、关注、拉黑、互动通知和 7/30 天榜单；只有有效账号、非作者且互动时已注册满 24 小时的点赞进入榜单分数。举报锁定提交时的版本，旧举报不会下架后来上线的新版本。公开媒体每次请求都会重新校验作品、版本和生命周期后再读取本地文件或生成短期对象签名地址。
+作品发布、广场治理和社区互动只在 PostgreSQL Provider 下启用。用户保存草稿、提交审核、编辑驳回稿、下架、重新上架以及管理员通过、驳回、下架都由 `workPublications` Repository 执行所有权校验和事务更新；用户主动下架后只能恢复最近一次已通过且公开可见的版本，管理员下架不能由用户直接恢复。用户或管理员只能在作品下架后永久删除发布主记录、全部版本快照、发布媒体关联、治理案件、通知和点赞，源素材、Canvas/短剧项目及媒体文件保持不变。`workGovernance` 使用稳定游标读取当前 `active + approved + public` 版本，并负责精选、举报、申诉和版本恢复。`workCommunity` 维护点赞、关注、拉黑、互动通知和 7/30 天榜单；只有有效账号、非作者且互动时已注册满 24 小时的点赞进入榜单分数。举报锁定提交时的版本，旧举报不会下架后来上线的新版本。站内公开媒体接口每次请求都会重新校验作品、版本和生命周期；Cloudflare 公开交付模式会让页面直接读取公开对象，作品下架只能移除平台入口，已经泄露的对象 URL 不能靠应用鉴权立即失效。
 
-外部存储开关只决定新媒体写入位置。开启后新上传和新生成媒体只写对象存储，不保留本地持久副本；关闭后新媒体恢复写入 `VOZEB_PRO_DATA_DIR`。后台可把已有本地登记分批迁移到对象存储，迁移候选和过期清理均通过带条件和上限的批次查询读取；只有对象上传和登记更新成功后才删除本地源文件，失败文件保留用于重试。
+外部存储开关只决定新媒体写入位置。开启后新上传和新生成媒体只写对象存储，不保留本地持久副本；关闭后新媒体恢复写入 `VOZEB_PRO_DATA_DIR`。后台可把已有本地登记分批迁移到对象存储，迁移候选和过期清理均通过带条件和上限的批次查询读取；迁移持有同一媒体登记行锁，只有对象上传和登记更新成功后才删除本地源文件，失败文件保留用于重试。只要仍存在对象媒体登记，Endpoint、Region、Bucket、Prefix 和 path-style 就不能直接修改；公开域名、交付方式与同一存储位置的凭据轮换不改变对象身份，仍允许更新。
+
+公开 R2/Cloudflare 模式不配置主动缓存清除凭据。物理删除 R2 原件成功后，已经进入 Cloudflare 边缘缓存的公开响应按当前 `s-maxage=3600` 最长约一小时自然失效；物理删除失败时登记保持 `pending`，公开对象地址可能继续可访问，必须由维护重试或管理员手动重试完成删除。后台外部存储列表使用管理员专用预览入口检查仍存在的对象，普通站内媒体入口不允许借此恢复待删除内容。
 
 `billing`、`promotions`、`coupons` 和 `referrals` Repository 已提供套餐商品、限时活动、优惠券模板、用户券、邀请计划/关系/奖励、订单、支付流水、支付回调事件、用户套餐生效记录、核销凭证、支付商账单对账批次和对账明细的基础读写能力。下单事务按稳定顺序锁定商品与用户券，保存日常价、活动优惠、券优惠和实付快照；关闭、超时、支付成功与整单退款沿用同一订单事务更新券状态。受邀用户首笔可信实付订单在支付事务内生成唯一奖励，冷静期到期后由维护接口或后台人工结算；退款和管理员拒绝会撤销未结算奖励、反向积分流水或安全撤销未使用优惠券，已锁定/核销优惠券进入人工复核。后台财务摘要通过一次 PostgreSQL CTE 查询聚合订单、支付、渠道和对账异常；缺少成功支付的已支付订单按订单计数，正常已退款订单不会因保留原成功支付流水而误报。当前已接入套餐商品/促销/优惠券/邀请奖励配置 API、用户领券/报价/创建订单 API、订单列表 API、支付成功后开通套餐/发放积分服务、真实支付下单参数生成、后台账单导入对账，以及 `/api/billing/webhooks/{provider}` 支付回调入口。
 

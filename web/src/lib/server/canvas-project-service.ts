@@ -5,6 +5,7 @@ import { createCanvasProject, CanvasProjectStoreError, getCanvasProject, listCan
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
 import { createCreativeConversation } from "@/lib/server/creative-runtime-store";
 import { CreativeEntityDeletionConflict, deleteCanvasAssistantConversationAggregates, deleteCanvasProjectAggregates } from "@/lib/server/creative-entity-deletion-store";
+import { resolveMediaDisplayUrls, type MediaDisplayUrls } from "@/lib/server/media-display-url";
 
 const MAX_PROJECT_BYTES = 5 * 1024 * 1024;
 
@@ -27,7 +28,7 @@ export function listCanvasProjectsForUser(userId: string, input: { page?: unknow
 export async function getCanvasProjectForUser(userId: string, id: string) {
     const project = await getCanvasProject(text(id, 160), userId);
     if (!project) throw new CanvasProjectServiceError("画布项目不存在", 404);
-    return project;
+    return enrichCanvasMediaDisplayUrls(project);
 }
 
 export async function createCanvasProjectForUser(userId: string, value: unknown) {
@@ -128,6 +129,43 @@ function normalizeProject(value: Record<string, unknown>, current: CanvasProject
         sourceHandoffId: current.sourceHandoffId,
         creativeConversationId: current.creativeConversationId,
     };
+}
+
+async function enrichCanvasMediaDisplayUrls(project: CanvasProject) {
+    const storageKeys = Array.from(
+        new Set([
+            ...project.nodes.flatMap((node) => (node.metadata?.storageKey ? [node.metadata.storageKey] : [])),
+            ...project.chatSessions.flatMap((session) => session.messages.flatMap((message) => (message.references || []).flatMap((reference) => (reference.storageKey ? [reference.storageKey] : [])))),
+        ]),
+    );
+    if (!storageKeys.length) return project;
+    let displayUrls: Map<string, MediaDisplayUrls>;
+    try {
+        displayUrls = await resolveMediaDisplayUrls(storageKeys, { thumbnailWidth: 640 });
+    } catch {
+        return project;
+    }
+    return {
+        ...project,
+        nodes: project.nodes.map((node) => {
+            if (!node.metadata?.storageKey) return node;
+            return { ...node, metadata: withCurrentDisplayUrls(node.metadata, displayUrls.get(node.metadata.storageKey)) };
+        }),
+        chatSessions: project.chatSessions.map((session) => ({
+            ...session,
+            messages: session.messages.map((message) => ({
+                ...message,
+                references: message.references?.map((reference) => (reference.storageKey ? withCurrentDisplayUrls(reference, displayUrls.get(reference.storageKey)) : reference)),
+            })),
+        })),
+    };
+}
+
+function withCurrentDisplayUrls<T extends { displayUrl?: string; thumbnailUrl?: string }>(value: T, urls?: MediaDisplayUrls): T {
+    const stable = { ...value };
+    delete stable.displayUrl;
+    delete stable.thumbnailUrl;
+    return { ...stable, ...(urls || {}) } as T;
 }
 
 function normalizeMutation(input: Record<string, unknown>, mutationId: string, baseUpdatedAt: string): CanvasProjectMutation {

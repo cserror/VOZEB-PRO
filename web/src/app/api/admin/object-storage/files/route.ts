@@ -60,9 +60,10 @@ export async function DELETE(request: Request) {
             action: "admin.object-storage.files.delete",
             actor: auditActorFromRequest(request, currentUser),
             target: { type: "object_storage", id: "primary" },
-            metadata: { requested: keys.length, deleted: data.deleted, blocked: data.blocked.length },
+            metadata: { requested: keys.length, deleted: data.deleted, blocked: data.blocked.length, pending: data.pending.length },
         });
-        return NextResponse.json({ code: 0, data, msg: data.blocked.length ? "部分对象仍被业务记录引用，未执行删除" : "外部存储对象已删除" });
+        const msg = data.pending.length ? "部分对象删除失败，已进入维护重试" : data.blocked.length ? "部分对象仍被业务记录引用，未执行删除" : "外部存储对象已删除";
+        return NextResponse.json({ code: 0, data, msg });
     } catch (error) {
         await safeRecordAuditLog({
             action: "admin.object-storage.files.delete",

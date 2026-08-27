@@ -42,7 +42,7 @@ describe("gallery surfaces", () => {
         expect(publishLink).toContain("state.ready");
         expect(publishLink).toContain("state.payload?.user");
         expect(publishLink).toContain('href="/works"');
-        expect(galleryCard).toContain("<video");
+        expect(galleryCard).toContain("<LazyMediaVideo");
         expect(sharedView).not.toContain("item.publicPrompt || item.description");
         expect(sharedView).not.toContain("item.tags.slice");
         expect(sharedView).toContain("<PublicWorkPreviewModal");

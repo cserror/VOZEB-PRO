@@ -11,13 +11,14 @@ import { CompactEmptyState } from "@/components/compact-empty-state";
 import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { useCopyText } from "@/hooks/use-copy-text";
 import { GENERATION_HISTORY_PAGE_SIZE, type GenerationHistoryItem, type GenerationHistoryKind, type GenerationHistoryStatus } from "@/lib/generation-history-contract";
+import { mediaRouteUrl } from "@/lib/media-route-url";
 import { addGenerationHistoryResultToLibrary, deleteGenerationHistoryResults, listGenerationHistory } from "@/services/api/generation-history";
 
 import { GenerationHistoryCard } from "./generation-history-card";
 import { downloadGenerationHistoryZip } from "./generation-history-download";
 
 const { RangePicker } = DatePicker;
-const masonryClassName = "grid-cols-2 md:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 min-[1800px]:grid-cols-6";
+const masonryClassName = "grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 sm:gap-4";
 
 export default function GenerationsPage() {
     const { message, modal } = App.useApp();
@@ -45,35 +46,38 @@ export default function GenerationsPage() {
         return () => window.clearTimeout(timer);
     }, [keyword]);
 
-    const load = useCallback(async (signal?: AbortSignal) => {
-        const requestId = ++requestIdRef.current;
-        setLoading(true);
-        setError("");
-        try {
-            const result = await listGenerationHistory(
-                {
-                    page,
-                    kind: kind === "all" ? undefined : kind,
-                    status: status === "all" ? undefined : status,
-                    keyword: debouncedKeyword || undefined,
-                    start: dates?.[0]?.startOf("day").toDate(),
-                    end: dates?.[1]?.endOf("day").toDate(),
-                },
-                signal,
-            );
-            if (requestId !== requestIdRef.current) return;
-            setItems(result.items);
-            setTotal(result.total);
-            setSelectedIds([]);
-        } catch (loadError) {
-            if (signal?.aborted || requestId !== requestIdRef.current) return;
-            setItems([]);
-            setTotal(0);
-            setError(loadError instanceof Error ? loadError.message : "生成记录加载失败");
-        } finally {
-            if (requestId === requestIdRef.current) setLoading(false);
-        }
-    }, [dates, debouncedKeyword, kind, page, status]);
+    const load = useCallback(
+        async (signal?: AbortSignal) => {
+            const requestId = ++requestIdRef.current;
+            setLoading(true);
+            setError("");
+            try {
+                const result = await listGenerationHistory(
+                    {
+                        page,
+                        kind: kind === "all" ? undefined : kind,
+                        status: status === "all" ? undefined : status,
+                        keyword: debouncedKeyword || undefined,
+                        start: dates?.[0]?.startOf("day").toDate(),
+                        end: dates?.[1]?.endOf("day").toDate(),
+                    },
+                    signal,
+                );
+                if (requestId !== requestIdRef.current) return;
+                setItems(result.items);
+                setTotal(result.total);
+                setSelectedIds([]);
+            } catch (loadError) {
+                if (signal?.aborted || requestId !== requestIdRef.current) return;
+                setItems([]);
+                setTotal(0);
+                setError(loadError instanceof Error ? loadError.message : "生成记录加载失败");
+            } finally {
+                if (requestId === requestIdRef.current) setLoading(false);
+            }
+        },
+        [dates, debouncedKeyword, kind, page, status],
+    );
 
     useEffect(() => {
         const controller = new AbortController();
@@ -147,7 +151,7 @@ export default function GenerationsPage() {
 
     return (
         <main className="h-full min-h-0 overflow-y-auto bg-background text-foreground">
-            <div className="mx-auto w-full max-w-[1800px] px-3 py-3 sm:px-6 sm:py-6">
+            <div data-testid="generation-history-content" className="mx-auto w-full max-w-7xl px-3 py-3 sm:px-6 sm:py-6">
                 <header className="border-b border-border pb-3 sm:pb-4">
                     <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -185,13 +189,7 @@ export default function GenerationsPage() {
                                 onChange={(value) => updateFilter(() => setKind(value))}
                             />
                         </div>
-                        <Input
-                            allowClear
-                            prefix={<Search className="size-4 text-muted-foreground" />}
-                            placeholder="搜索原提示词或标题"
-                            value={keyword}
-                            onChange={(event) => updateFilter(() => setKeyword(event.target.value))}
-                        />
+                        <Input allowClear prefix={<Search className="size-4 text-muted-foreground" />} placeholder="搜索原提示词或标题" value={keyword} onChange={(event) => updateFilter(() => setKeyword(event.target.value))} />
                     </div>
                     <Select
                         value={status}
@@ -203,24 +201,14 @@ export default function GenerationsPage() {
                         ]}
                         onChange={(value) => updateFilter(() => setStatus(value))}
                     />
-                    <RangePicker
-                        className="w-full"
-                        value={dates}
-                        allowEmpty={[true, true]}
-                        placeholder={["开始日期", "结束日期"]}
-                        onChange={(value) => updateFilter(() => setDates(value as typeof dates))}
-                    />
+                    <RangePicker className="w-full" value={dates} allowEmpty={[true, true]} placeholder={["开始日期", "结束日期"]} onChange={(value) => updateFilter(() => setDates(value as typeof dates))} />
                 </section>
 
                 <div ref={listStartRef} className="scroll-mt-3">
                     {selectedIds.length ? (
                         <section className="sticky top-0 z-20 mt-2 flex min-w-0 items-center justify-between gap-2 border-y border-border bg-background/95 px-2 py-2 backdrop-blur sm:mt-3 sm:px-3">
                             <div className="flex min-w-0 items-center gap-2">
-                                <Checkbox
-                                    checked={allSelected}
-                                    indeterminate={!allSelected && selectedIds.length > 0}
-                                    onChange={(event) => setSelectedIds(event.target.checked ? selectableIds : [])}
-                                >
+                                <Checkbox checked={allSelected} indeterminate={!allSelected && selectedIds.length > 0} onChange={(event) => setSelectedIds(event.target.checked ? selectableIds : [])}>
                                     <span className="text-xs sm:text-sm">已选 {selectedIds.length} 条</span>
                                 </Checkbox>
                                 <Button type="text" size="small" icon={<X className="size-3.5" />} onClick={() => setSelectedIds([])}>
@@ -271,7 +259,7 @@ export default function GenerationsPage() {
                                                 onSelect={(checked) => setSelectedIds((current) => (checked ? [...current.filter((id) => id !== item.id), item.id] : current.filter((id) => id !== item.id)))}
                                                 onCopy={() => copyText(item.optimizedPrompt || item.originalPrompt, "提示词已复制")}
                                                 onContinue={() => item.continueHref && router.push(item.continueHref)}
-                                                onDownload={() => item.asset && downloadAgentMedia([{ type: item.kind, url: item.asset.url, title: item.title, mimeType: item.asset.mimeType }])}
+                                                onDownload={() => item.asset && downloadAgentMedia([{ type: item.kind, url: mediaRouteUrl("generation", item.asset.storageKey), title: item.title, mimeType: item.asset.mimeType }])}
                                                 onDetails={() => setDetailItem(item)}
                                                 onAddToLibrary={() => void addToLibrary(item)}
                                                 onDelete={() => removeItems([item])}
@@ -309,16 +297,7 @@ export default function GenerationsPage() {
 function GenerationDetails({ item, onClose }: { item?: GenerationHistoryItem; onClose: () => void }) {
     const parameters = item ? Object.entries(item.parameters) : [];
     return (
-        <Modal
-            title="生成详情"
-            open={Boolean(item)}
-            footer={null}
-            centered
-            width="min(680px, calc(100vw - 24px))"
-            styles={{ body: { maxHeight: "calc(100dvh - 112px)", overflowY: "auto" } }}
-            onCancel={onClose}
-            destroyOnHidden
-        >
+        <Modal title="生成详情" open={Boolean(item)} footer={null} centered width="min(680px, calc(100vw - 24px))" styles={{ body: { maxHeight: "calc(100dvh - 112px)", overflowY: "auto" } }} onCancel={onClose} destroyOnHidden>
             {item ? (
                 <Descriptions column={1} size="small" bordered styles={{ label: { whiteSpace: "nowrap", verticalAlign: "top" }, content: { minWidth: 0 } }}>
                     <Descriptions.Item label="原提示词">
@@ -327,8 +306,8 @@ function GenerationDetails({ item, onClose }: { item?: GenerationHistoryItem; on
                         </div>
                     </Descriptions.Item>
                     {item.optimizedPrompt ? (
-                        <Descriptions.Item label="优化提示词">
-                            <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words pr-1 sm:max-h-36" role="region" aria-label="优化提示词完整内容" tabIndex={0}>
+                        <Descriptions.Item label="生图提示词">
+                            <div className="max-h-28 overflow-y-auto whitespace-pre-wrap break-words pr-1 sm:max-h-36" role="region" aria-label="生图提示词完整内容" tabIndex={0}>
                                 {item.optimizedPrompt}
                             </div>
                         </Descriptions.Item>
@@ -337,7 +316,11 @@ function GenerationDetails({ item, onClose }: { item?: GenerationHistoryItem; on
                     {parameters.length ? (
                         <Descriptions.Item label="参数">
                             <div className="flex flex-wrap gap-1">
-                                {parameters.map(([key, value]) => <Tag key={key}>{key}: {value}</Tag>)}
+                                {parameters.map(([key, value]) => (
+                                    <Tag key={key}>
+                                        {key}: {value}
+                                    </Tag>
+                                ))}
                             </div>
                         </Descriptions.Item>
                     ) : null}
@@ -345,7 +328,11 @@ function GenerationDetails({ item, onClose }: { item?: GenerationHistoryItem; on
                     <Descriptions.Item label="生成时间">{formatDateTime(item.completedAt || item.createdAt)}</Descriptions.Item>
                     <Descriptions.Item label={`${item.kind === "video" ? "视频" : "图片"}任务耗时`}>{item.durationMs > 0 ? `${(item.durationMs / 1000).toFixed(1)} 秒` : "未记录"}</Descriptions.Item>
                     <Descriptions.Item label="来源">{sourceLabel(item.source)}</Descriptions.Item>
-                    {item.error ? <Descriptions.Item label="失败原因"><span className="break-words text-rose-600 dark:text-rose-300">{item.error}</span></Descriptions.Item> : null}
+                    {item.error ? (
+                        <Descriptions.Item label="失败原因">
+                            <span className="break-words text-rose-600 dark:text-rose-300">{item.error}</span>
+                        </Descriptions.Item>
+                    ) : null}
                 </Descriptions>
             ) : null}
         </Modal>

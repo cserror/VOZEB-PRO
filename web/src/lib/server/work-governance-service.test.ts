@@ -27,10 +27,12 @@ const mocks = vi.hoisted(() => {
         ensurePostgresSchema: vi.fn(),
         getDatabaseProvider: vi.fn(() => "postgres"),
         withPostgresTransaction: vi.fn(async (handler: (client: unknown) => Promise<unknown>) => handler({})),
+        displayUrls: vi.fn(),
     };
 });
 
 vi.mock("@/lib/server/database", () => mocks);
+vi.mock("@/lib/server/media-display-url", () => ({ resolveMediaDisplayUrls: mocks.displayUrls }));
 
 import { listPublicGallery, listWorkCasesForOwner, resolveWorkGovernanceCase, submitPublicWorkReport, WorkGovernanceServiceError } from "./work-governance-service";
 
@@ -39,6 +41,7 @@ describe("work governance service", () => {
         vi.clearAllMocks();
         mocks.getDatabaseProvider.mockReturnValue("postgres");
         mocks.createPostgresRepositories.mockReturnValue({ workPublications: mocks.workPublications, workGovernance: mocks.workGovernance });
+        mocks.displayUrls.mockResolvedValue(new Map());
     });
 
     it("forwards owner appeal pagination without widening the work scope", async () => {
@@ -71,6 +74,7 @@ describe("work governance service", () => {
                     authorAvatarStorageKey: "permanent/2026/07/27/images/avatar.webp",
                     authorAvatarUpdatedAt: "2026-07-27T01:00:00.000Z",
                     assetId: "asset-one",
+                    assetStorageKey: "permanent/2026/07/27/images/work.png",
                     assetMediaType: "image",
                     assetMimeType: "image/png",
                 },
@@ -78,10 +82,11 @@ describe("work governance service", () => {
             hasMore: false,
         });
 
+        mocks.displayUrls.mockResolvedValue(new Map([["permanent/2026/07/27/images/work.png", { displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/work.png", thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/work.png" }]]));
         const result = await listPublicGallery();
         const serialized = JSON.stringify(result);
 
-        expect(result.items[0]?.preview?.url).toBe("/api/public/works/publicwork123/media/asset-one");
+        expect(result.items[0]?.preview?.url).toBe("https://img.example.com/cdn-cgi/image/width=640/work.png");
         expect(result.items[0]?.authorAvatarUrl).toBe("/api/public/users/user-one/avatar?v=2026-07-27T01%3A00%3A00.000Z");
         expect(serialized).not.toContain("work-one");
         expect(serialized).not.toContain("version-one");

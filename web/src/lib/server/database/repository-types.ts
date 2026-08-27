@@ -277,9 +277,7 @@ export type PromptRecord = {
 
 export type GenerationLogAssetRecord = {
     type: GenerationKind;
-    url: string;
-    remoteUrl?: string;
-    serverUrl?: string;
+    storageKey: string;
     mimeType?: string;
     width?: number;
     height?: number;
@@ -774,6 +772,7 @@ export type PublishedGalleryItemRecord = {
     authorAvatarStorageKey?: string;
     authorAvatarUpdatedAt?: string;
     assetId?: string;
+    assetStorageKey?: string;
     assetMediaType?: "image" | "video" | "audio";
     assetMimeType?: string;
 };

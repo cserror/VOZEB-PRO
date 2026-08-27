@@ -12,6 +12,7 @@ import { PublicWorkLikeButton } from "@/components/works/public-work-like-button
 import { ResponsiveMasonryGrid } from "@/components/works/responsive-masonry-grid";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { PublicWorkCardTitle } from "@/components/works/public-work-card-title";
 import { userAvatarFallback } from "@/lib/user-avatar";
 import { WORK_CATEGORY_OPTIONS } from "@/lib/work-publication-options";
@@ -173,7 +174,7 @@ function InspirationCard({
                     {image ? (
                         <LazyMediaImage src={imagePreviewUrl(item.preview!.url, 640)} alt={item.title} containerClassName="w-full" imageClassName="block h-auto w-full group-hover:scale-[1.015]" />
                     ) : item.preview?.mediaType === "video" ? (
-                        <video src={item.preview.url} muted playsInline preload="metadata" className="aspect-video w-full object-cover" />
+                        <LazyMediaVideo src={item.preview.url} muted playsInline preload="metadata" className="aspect-video w-full object-cover" />
                     ) : (
                         <span className="grid aspect-[4/3] w-full place-items-center text-[#8b949f] dark:text-[#737d89]">
                             <ImagePlus className="size-7" />

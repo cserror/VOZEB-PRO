@@ -3,6 +3,7 @@
 import { Film, LoaderCircle, Maximize2, Pause, Play, RotateCw, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 
+import { creativeAssetDisplayUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { cn } from "@/lib/utils";
@@ -24,7 +25,7 @@ export function CreativeVideoResult({
     fallbackRatio?: string;
     renderActions?: (activeAsset: CreativeAsset) => ReactNode;
 }) {
-    const videos = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type === "video" && assetUrl(asset)), [assets]);
+    const videos = useMemo(() => assets.filter((asset) => asset.status === "ready" && asset.type === "video" && creativeAssetDisplayUrl(asset)), [assets]);
     const { selectedResult: activeAsset, selectedIndex, selectResult } = useSelectedCreativeResult(videos);
     const [loadedDimensions, setLoadedDimensions] = useState<Record<string, { width: number; height: number }>>({});
     const presentation = useMemo(() => (activeAsset ? creativeVideoPresentation(message, activeAsset, fallbackResolution, fallbackRatio) : null), [activeAsset, fallbackRatio, fallbackResolution, message]);
@@ -111,7 +112,7 @@ function CreativeVideoPlayer({ asset, coverUrl, resolution, onDimensions }: { as
         >
             <video
                 ref={playback.videoRef}
-                src={assetUrl(asset)}
+                src={creativeAssetDisplayUrl(asset)}
                 poster={posterUrl}
                 muted={playback.muted}
                 playsInline
@@ -289,8 +290,4 @@ function validDimensions(asset: Pick<CreativeAsset, "width" | "height">) {
     const width = Number(asset.width);
     const height = Number(asset.height);
     return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0 ? { width, height } : undefined;
-}
-
-function assetUrl(asset: CreativeAsset) {
-    return asset.serverUrl || asset.remoteUrl || "";
 }

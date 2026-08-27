@@ -4,10 +4,12 @@ import { resolveResultSize } from "@/app/api/image-tasks/image-task-size";
 import { dedupeImageResults } from "@/lib/image-result-dedupe";
 import { generationModelId, systemGenerationChannelId } from "@/lib/server/generation-channel";
 import { generationMediaProxyHeaders } from "@/lib/server/generation-media-authorization";
-import { deleteLocalAsset, normalizeAssets } from "@/lib/server/generation-log-repository";
+import { deleteLocalAsset, normalizeAssets, stableAssetUrl } from "@/lib/server/generation-log-repository";
+import type { GenerationLogAsset } from "@/lib/server/generation-log-types";
 import { validateImageLayerOutputs } from "@/lib/server/image-layer-output";
 import type { ImageTask, StoredImageTaskMediaResult } from "@/lib/server/image-task-store";
 import { assertTransparentImageOutput } from "@/lib/server/image-transparent-output";
+import { getLocalMediaRegistrations } from "@/lib/server/local-media-registry";
 
 export async function prepareImageTaskResults(task: ImageTask, result: ImageTaskResult, origin: string, authContext: string): Promise<StoredImageTaskMediaResult[]> {
     const preserveLayers = task.config.outputMode === "layers";
@@ -67,23 +69,36 @@ async function persistPreparedResults(task: ImageTask, results: ImageTaskMediaRe
             }),
         ),
     );
-    const stored = settled
-        .flatMap((item) => (item.status === "fulfilled" ? item.value : []))
-        .map((asset) => ({
-            dataUrl: asset.serverUrl || asset.url,
-            remoteUrl: asset.remoteUrl,
-            serverUrl: asset.serverUrl,
-            width: asset.width,
-            height: asset.height,
-            bytes: asset.bytes,
-            mimeType: asset.mimeType,
-        }));
+    const stored = await storedImageTaskResultsFromAssets(settled.flatMap((item) => (item.status === "fulfilled" ? item.value : [])));
     if (requireAll && stored.length !== results.length) {
         await deletePreparedImageTaskResults(stored);
         throw firstRejected(settled) || new Error("上游分层图片保存失败");
     }
     if (!stored.length) throw firstRejected(settled) || new Error("生成图片保存到服务器失败");
     return stored;
+}
+
+export async function storedImageTaskResultsFromAssets(assets: GenerationLogAsset[]): Promise<StoredImageTaskMediaResult[]> {
+    const storageKeys = Array.from(new Set(assets.flatMap((asset) => (asset.storageKey ? [asset.storageKey] : []))));
+    const registrations = await getLocalMediaRegistrations(storageKeys);
+    const providers = new Map(registrations.map((registration) => [registration.storageKey, registration.storageProvider === "object" ? ("object" as const) : ("local" as const)]));
+    return assets.flatMap((asset) => {
+        const storageKey = asset.storageKey;
+        const serverUrl = stableAssetUrl(asset);
+        if (!storageKey || !serverUrl) return [];
+        return [
+            {
+                dataUrl: serverUrl,
+                serverUrl,
+                storageKey,
+                storageKind: providers.get(storageKey) || "local",
+                width: asset.width,
+                height: asset.height,
+                bytes: asset.bytes,
+                mimeType: asset.mimeType,
+            },
+        ];
+    });
 }
 
 function imageTaskMediaResults(result: ImageTaskResult, preserveDuplicates: boolean): ImageTaskMediaResult[] {

@@ -76,7 +76,7 @@ describe("local media storage", () => {
         await writeFile(outside, "outside");
         const forgedId = Buffer.from(JSON.stringify({ scope: "reference", relativePath: "../outside.png" }), "utf8").toString("base64url");
 
-        expect(await storage.deleteLocalMediaAssets([forgedId])).toEqual({ deletedFiles: 0, deletedBytes: 0, blocked: [] });
+        expect(await storage.deleteLocalMediaAssets([forgedId])).toEqual({ deletedFiles: 0, deletedBytes: 0, blocked: [], pending: [] });
         await expect(access(outside)).resolves.toBeUndefined();
     });
 

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import type { Asset, AssetKind } from "@/lib/library-asset-contract";
 import { canvasThemes, type CanvasTheme } from "@/lib/canvas-theme";
 import { imagePreviewUrl } from "@/lib/media-image-url";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { listLibraryAssetPage } from "@/services/api/library-assets";
 import { listMyPrompts } from "@/services/api/my-prompts";
 import { ALL_PROMPTS_OPTION, fetchPrompts, promptCategoryLabel, type Prompt } from "@/services/api/prompts";
@@ -19,7 +20,7 @@ import { libraryAssetToInsertPayload, type InsertAssetPayload } from "./canvas-a
 type PanelTab = "current" | "assets" | "my" | "library";
 type CurrentMediaKind = "image" | "video";
 type CurrentMedia = { id: string; title: string; kind: CurrentMediaKind; url: string };
-type MediaPreview = { kind: CurrentMediaKind; title: string; url: string; posterUrl?: string };
+type MediaPreview = { kind: CurrentMediaKind; title: string; url: string; thumbnailUrl?: string; posterUrl?: string };
 type PagedCollection<T> = { items: T[]; page: number; total: number; loading: boolean; loaded: boolean; error: string; categories: string[] };
 
 const emptyCollection = <T,>(): PagedCollection<T> => ({ items: [], page: 0, total: 0, loading: false, loaded: false, error: "", categories: [] });
@@ -380,7 +381,7 @@ function LibraryAssets({
             {collection.items.length ? (
                 <div className="grid grid-cols-4 gap-2 pb-3" data-testid="canvas-library-assets-grid">
                     {collection.items.map((asset) => {
-                        const preview = assetPreview(asset);
+                        const preview = libraryAssetMediaPreview(asset);
                         return (
                             <ThumbnailActionCard key={asset.id} title={asset.title} action="插入" onAction={() => onInsert(asset)} onPreview={preview ? () => onPreview(preview) : undefined}>
                                 <LibraryAssetThumbnail asset={asset} />
@@ -567,13 +568,13 @@ function MediaKindSwitch({ kind, imageCount, videoCount, onChange }: { kind: Cur
     );
 }
 
-function MediaThumbnail({ kind, url, title, posterUrl }: { kind: CurrentMediaKind; url: string; title: string; posterUrl?: string }) {
-    if (kind === "image") return <img src={imagePreviewUrl(url, 320)} alt={title} className="size-full object-cover" loading="lazy" />;
-    return <video src={url} poster={posterUrl ? imagePreviewUrl(posterUrl, 320) : undefined} aria-label={title} className="pointer-events-none size-full object-cover" muted playsInline preload="metadata" />;
+function MediaThumbnail({ kind, url, title, thumbnailUrl, posterUrl }: MediaPreview) {
+    if (kind === "image") return <img src={thumbnailUrl || imagePreviewUrl(url, 320)} alt={title} className="size-full object-cover" loading="lazy" />;
+    return <LazyMediaVideo src={url} poster={posterUrl ? imagePreviewUrl(posterUrl, 320) : undefined} aria-label={title} className="pointer-events-none size-full object-cover" muted playsInline preload="metadata" />;
 }
 
 function LibraryAssetThumbnail({ asset }: { asset: Asset }) {
-    const preview = assetPreview(asset);
+    const preview = libraryAssetMediaPreview(asset);
     if (preview) return <MediaThumbnail {...preview} />;
     if (asset.kind === "audio") return <FallbackThumbnail icon={<FileAudio className="size-5" />} />;
     return <FallbackThumbnail icon={<FileText className="size-5" />} />;
@@ -640,9 +641,12 @@ function MediaPreviewModal({ preview, onClose }: { preview?: MediaPreview; onClo
     );
 }
 
-function assetPreview(asset: Asset): MediaPreview | undefined {
-    if (asset.kind === "image") return { kind: "image", title: asset.title, url: asset.data.serverUrl || asset.data.remoteUrl || asset.data.dataUrl };
-    if (asset.kind === "video") return { kind: "video", title: asset.title, url: asset.data.serverUrl || asset.data.remoteUrl || asset.data.url, posterUrl: asset.coverUrl || undefined };
+export function libraryAssetMediaPreview(asset: Asset): MediaPreview | undefined {
+    if (asset.kind === "image") {
+        const stableUrl = asset.data.serverUrl || asset.data.remoteUrl || asset.data.dataUrl;
+        return { kind: "image", title: asset.title, url: asset.displayUrl || stableUrl, thumbnailUrl: asset.thumbnailUrl || asset.displayUrl || undefined };
+    }
+    if (asset.kind === "video") return { kind: "video", title: asset.title, url: asset.displayUrl || asset.data.serverUrl || asset.data.remoteUrl || asset.data.url, posterUrl: asset.coverUrl || undefined };
     return undefined;
 }
 

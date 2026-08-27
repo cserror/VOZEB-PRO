@@ -1,13 +1,14 @@
 import { readJsonDataFile } from "@/lib/server/data-adapter";
-import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database";
+import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, type QueryExecutor } from "@/lib/server/database";
 
-export async function countLocalMediaReferences(storageKeys: string[]) {
+export async function countLocalMediaReferences(storageKeys: string[], options: { executor?: QueryExecutor } = {}) {
     const keys = Array.from(new Set(storageKeys.map(normalizeKey).filter(Boolean)));
     const counts = new Map(keys.map((key) => [key, 0]));
     if (!keys.length) return counts;
     if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        const result = await postgresQuery<{ storage_key: string; total: number | string }>(
+        if (!options.executor) await ensurePostgresSchema();
+        const query: QueryExecutor["query"] = options.executor ? options.executor.query.bind(options.executor) : postgresQuery;
+        const result = await query<{ storage_key: string; total: number | string }>(
             `WITH requested AS (
                 SELECT unnest($1::text[]) AS storage_key
             ), reference_counts AS (
@@ -50,8 +51,7 @@ export async function countLocalMediaReferences(storageKeys: string[]) {
                 UNION ALL
                 SELECT r.storage_key, count(*)::int
                 FROM requested r
-                JOIN generation_log_assets a ON position(r.storage_key in COALESCE(a.server_url, '')) > 0
-                    OR position(r.storage_key in COALESCE(a.url, '')) > 0
+                JOIN generation_log_assets a ON a.storage_key = r.storage_key
                 GROUP BY r.storage_key
                 UNION ALL
                 SELECT r.storage_key, count(*)::int

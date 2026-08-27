@@ -41,14 +41,27 @@ describe("CreativeAssetMentionPicker", () => {
         expect(markup).not.toContain('aria-label="引用素材类型"');
     });
 
-    it("uses the real video source as the thumbnail when no cover image exists", () => {
+    it("defers the real video source when no cover image exists", () => {
         const video = { ...asset("video-no-cover", "video", 1), metadata: {} };
         const markup = renderToStaticMarkup(<CreativeAssetMentionPicker assets={[video]} selectedAssetIds={[]} onSelect={() => undefined} />);
 
         expect(markup).toContain("<video");
-        expect(markup).toContain('src="/media/video-no-cover.mp4"');
-        expect(markup).toContain('preload="metadata"');
+        expect(markup).not.toContain('src="/media/video-no-cover.mp4"');
+        expect(markup).toContain('preload="none"');
         expect(markup).toContain('aria-hidden="true"');
+    });
+
+    it("renders image choices from the CDN thumbnail url", () => {
+        const cdnAsset: CreativeAsset & { displayUrl: string; thumbnailUrl: string } = {
+            ...asset("image-cdn", "image", 1),
+            displayUrl: "https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png",
+            thumbnailUrl: "https://img-test.paisi.art/cdn-cgi/image/width=640/result.png",
+        };
+
+        const markup = renderToStaticMarkup(<CreativeAssetMentionPicker assets={[cdnAsset]} selectedAssetIds={[]} onSelect={() => undefined} />);
+
+        expect(markup).toContain('src="https://img-test.paisi.art/cdn-cgi/image/width=640/result.png"');
+        expect(markup).not.toContain('src="/media/image-cdn.webp"');
     });
 });
 

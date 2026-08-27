@@ -1,4 +1,5 @@
 import { readJsonDataFile, writeJsonDataFile } from "@/lib/server/data-adapter";
+import type { ImageDeliveryProvider } from "@/lib/object-storage-contract";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery } from "@/lib/server/database/postgres";
 
 export type StoredObjectStorageSettings = {
@@ -8,6 +9,8 @@ export type StoredObjectStorageSettings = {
     region: string;
     bucket: string;
     prefix: string;
+    publicBaseUrl: string;
+    imageDeliveryProvider: ImageDeliveryProvider;
     accessKeyIdCiphertext: string;
     secretAccessKeyCiphertext: string;
     forcePathStyle: boolean;
@@ -33,17 +36,31 @@ export async function writeObjectStorageSettings(input: StoredObjectStorageSetti
         await ensurePostgresSchema();
         const result = await postgresQuery(
             `INSERT INTO object_storage_settings (
-                id, enabled, endpoint, region, bucket, prefix, access_key_id_ciphertext,
-                secret_access_key_ciphertext, force_path_style, created_at, updated_at
-             ) VALUES ('default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                id, enabled, endpoint, region, bucket, prefix, public_base_url, image_delivery_provider,
+                access_key_id_ciphertext, secret_access_key_ciphertext, force_path_style, created_at, updated_at
+             ) VALUES ('default',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
              ON CONFLICT (id) DO UPDATE SET
                 enabled = EXCLUDED.enabled, endpoint = EXCLUDED.endpoint, region = EXCLUDED.region,
-                bucket = EXCLUDED.bucket, prefix = EXCLUDED.prefix,
+                bucket = EXCLUDED.bucket, prefix = EXCLUDED.prefix, public_base_url = EXCLUDED.public_base_url,
+                image_delivery_provider = EXCLUDED.image_delivery_provider,
                 access_key_id_ciphertext = EXCLUDED.access_key_id_ciphertext,
                 secret_access_key_ciphertext = EXCLUDED.secret_access_key_ciphertext,
                 force_path_style = EXCLUDED.force_path_style, updated_at = EXCLUDED.updated_at
              RETURNING *`,
-            [value.enabled, value.endpoint, value.region, value.bucket, value.prefix, value.accessKeyIdCiphertext, value.secretAccessKeyCiphertext, value.forcePathStyle, new Date(value.createdAt), new Date(value.updatedAt)],
+            [
+                value.enabled,
+                value.endpoint,
+                value.region,
+                value.bucket,
+                value.prefix,
+                value.publicBaseUrl,
+                value.imageDeliveryProvider,
+                value.accessKeyIdCiphertext,
+                value.secretAccessKeyCiphertext,
+                value.forcePathStyle,
+                new Date(value.createdAt),
+                new Date(value.updatedAt),
+            ],
         );
         return mapRow(result.rows[0]);
     }
@@ -67,6 +84,8 @@ function defaultSettings(): StoredObjectStorageSettings {
         region: "us-east-1",
         bucket: "",
         prefix: "vozeb-pro",
+        publicBaseUrl: "",
+        imageDeliveryProvider: "none",
         accessKeyIdCiphertext: "",
         secretAccessKeyCiphertext: "",
         forcePathStyle: false,
@@ -85,6 +104,8 @@ function normalizeSettings(value: unknown): StoredObjectStorageSettings {
         region: text(source.region, 160) || defaults.region,
         bucket: text(source.bucket, 255),
         prefix: text(source.prefix, 700) || defaults.prefix,
+        publicBaseUrl: text(source.publicBaseUrl ?? source.public_base_url, 2000),
+        imageDeliveryProvider: source.imageDeliveryProvider === "cloudflare" || source.image_delivery_provider === "cloudflare" ? "cloudflare" : "none",
         accessKeyIdCiphertext: text(source.accessKeyIdCiphertext ?? source.access_key_id_ciphertext, 4000),
         secretAccessKeyCiphertext: text(source.secretAccessKeyCiphertext ?? source.secret_access_key_ciphertext, 4000),
         forcePathStyle: source.forcePathStyle === true || source.force_path_style === true,

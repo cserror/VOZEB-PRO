@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
     write: vi.fn(),
     encrypt: vi.fn((value: string) => `encrypted:${value}`),
     decrypt: vi.fn((value: string) => value.replace(/^encrypted:/, "")),
+    hasExternalMedia: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database/object-storage-repository", () => ({
@@ -14,6 +15,9 @@ vi.mock("@/lib/server/database/object-storage-repository", () => ({
 vi.mock("@/lib/server/secret-crypto", () => ({
     encryptSecretValue: mocks.encrypt,
     decryptSecretValue: mocks.decrypt,
+}));
+vi.mock("@/lib/server/local-media-registry", () => ({
+    hasExternalMediaRegistrations: mocks.hasExternalMedia,
 }));
 
 import { getObjectStorageAdminSettings, getObjectStorageRuntimeConfig, saveObjectStorageAdminSettings } from "./object-storage-config";
@@ -25,6 +29,8 @@ const storedSettings = {
     region: "cn-test-1",
     bucket: "media",
     prefix: "vozeb-pro",
+    publicBaseUrl: "https://img.example.com",
+    imageDeliveryProvider: "cloudflare" as const,
     accessKeyIdCiphertext: "encrypted:old-access",
     secretAccessKeyCiphertext: "encrypted:old-secret",
     forcePathStyle: false,
@@ -37,12 +43,13 @@ describe("object storage configuration", () => {
         vi.clearAllMocks();
         mocks.read.mockResolvedValue(storedSettings);
         mocks.write.mockImplementation(async (value) => value);
+        mocks.hasExternalMedia.mockResolvedValue(false);
     });
 
     it("redacts stored credentials from administrator settings", async () => {
         const settings = await getObjectStorageAdminSettings();
 
-        expect(settings).toMatchObject({ hasAccessKeyId: true, hasSecretAccessKey: true });
+        expect(settings).toMatchObject({ publicBaseUrl: "https://img.example.com", imageDeliveryProvider: "cloudflare", hasAccessKeyId: true, hasSecretAccessKey: true });
         expect(JSON.stringify(settings)).not.toContain("old-access");
         expect(JSON.stringify(settings)).not.toContain("old-secret");
     });
@@ -54,6 +61,8 @@ describe("object storage configuration", () => {
             region: "cn-test-1",
             bucket: "media",
             prefix: "/tenant/assets/",
+            publicBaseUrl: "https://img.example.com/",
+            imageDeliveryProvider: "cloudflare",
             forcePathStyle: true,
             accessKeyId: "",
             secretAccessKey: "",
@@ -64,6 +73,8 @@ describe("object storage configuration", () => {
                 enabled: true,
                 endpoint: "https://oss.example.com",
                 prefix: "tenant/assets",
+                publicBaseUrl: "https://img.example.com",
+                imageDeliveryProvider: "cloudflare",
                 accessKeyIdCiphertext: "encrypted:old-access",
                 secretAccessKeyCiphertext: "encrypted:old-secret",
             }),
@@ -75,6 +86,39 @@ describe("object storage configuration", () => {
         await expect(saveObjectStorageAdminSettings({ enabled: false, endpoint: "ftp://oss.example.com", region: "auto", bucket: "media", prefix: "vozeb-pro", forcePathStyle: false })).rejects.toThrow("Endpoint");
         mocks.read.mockResolvedValue({ ...storedSettings, accessKeyIdCiphertext: "", secretAccessKeyCiphertext: "" });
         await expect(saveObjectStorageAdminSettings({ enabled: true, endpoint: "", region: "auto", bucket: "media", prefix: "vozeb-pro", forcePathStyle: false })).rejects.toThrow("Access Key");
+        await expect(saveObjectStorageAdminSettings({ enabled: false, endpoint: "", region: "auto", bucket: "media", prefix: "vozeb-pro", publicBaseUrl: "http://img.example.com", forcePathStyle: false })).rejects.toThrow("HTTPS");
+        await expect(saveObjectStorageAdminSettings({ enabled: false, endpoint: "", region: "auto", bucket: "media", prefix: "vozeb-pro", publicBaseUrl: "javascript:alert(1)", forcePathStyle: false })).rejects.toThrow("媒体公开域名");
+        await expect(
+            saveObjectStorageAdminSettings({
+                enabled: true,
+                endpoint: "",
+                region: "auto",
+                bucket: "media",
+                prefix: "vozeb-pro",
+                publicBaseUrl: "",
+                imageDeliveryProvider: "cloudflare",
+                accessKeyId: "access",
+                secretAccessKey: "secret",
+                forcePathStyle: false,
+            }),
+        ).rejects.toThrow("媒体公开域名");
+        await expect(
+            saveObjectStorageAdminSettings({
+                enabled: true,
+                endpoint: "",
+                region: "auto",
+                bucket: "media",
+                prefix: "vozeb-pro",
+                publicBaseUrl: "https://img.example.com/media",
+                imageDeliveryProvider: "cloudflare",
+                accessKeyId: "access",
+                secretAccessKey: "secret",
+                forcePathStyle: false,
+            }),
+        ).rejects.toThrow("不能包含路径");
+        await expect(
+            saveObjectStorageAdminSettings({ enabled: true, endpoint: "", region: "auto", bucket: "media", prefix: "vozeb-pro", publicBaseUrl: "", imageDeliveryProvider: "none", accessKeyId: "access", secretAccessKey: "secret", forcePathStyle: false }),
+        ).resolves.toBeDefined();
     });
 
     it("does not let an old in-flight read overwrite the cache after a switch change", async () => {
@@ -89,6 +133,7 @@ describe("object storage configuration", () => {
             region: storedSettings.region,
             bucket: storedSettings.bucket,
             prefix: storedSettings.prefix,
+            imageDeliveryProvider: storedSettings.imageDeliveryProvider,
             forcePathStyle: false,
         });
         resolveOld(storedSettings);
@@ -96,5 +141,48 @@ describe("object storage configuration", () => {
 
         await expect(getObjectStorageRuntimeConfig()).resolves.toMatchObject({ enabled: true });
         expect(mocks.read).toHaveBeenCalledTimes(4);
+    });
+
+    it.each([
+        ["Endpoint", { endpoint: "https://other.example.com" }],
+        ["Region", { region: "other-region" }],
+        ["Bucket", { bucket: "other-bucket" }],
+        ["Prefix", { prefix: "other-prefix" }],
+        ["path-style", { forcePathStyle: true }],
+    ])("keeps %s immutable while registered objects still exist", async (_field, patch) => {
+        mocks.hasExternalMedia.mockResolvedValue(true);
+
+        await expect(
+            saveObjectStorageAdminSettings({
+                enabled: true,
+                endpoint: storedSettings.endpoint,
+                region: storedSettings.region,
+                bucket: storedSettings.bucket,
+                prefix: storedSettings.prefix,
+                publicBaseUrl: "https://cdn.example.com",
+                imageDeliveryProvider: "cloudflare",
+                forcePathStyle: storedSettings.forcePathStyle,
+                ...patch,
+            }),
+        ).rejects.toThrow("已有对象媒体");
+    });
+
+    it("allows delivery settings and credentials to change without moving stored objects", async () => {
+        mocks.hasExternalMedia.mockResolvedValue(true);
+
+        await expect(
+            saveObjectStorageAdminSettings({
+                enabled: true,
+                endpoint: storedSettings.endpoint,
+                region: storedSettings.region,
+                bucket: storedSettings.bucket,
+                prefix: storedSettings.prefix,
+                publicBaseUrl: "https://cdn.example.com",
+                imageDeliveryProvider: "cloudflare",
+                forcePathStyle: storedSettings.forcePathStyle,
+                accessKeyId: "rotated-access",
+                secretAccessKey: "rotated-secret",
+            }),
+        ).resolves.toBeDefined();
     });
 });

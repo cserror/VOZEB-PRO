@@ -1,17 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ findPublicUserIdsByKeyword: vi.fn(), getCurrentUser: vi.fn(), getPublicUsersByIds: vi.fn(), getLocalMediaAssetSummary: vi.fn(), listLocalMediaAssets: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+    cleanupExpiredLocalMediaAssets: vi.fn(),
+    deleteLocalMediaAssets: vi.fn(),
+    findPublicUserIdsByKeyword: vi.fn(),
+    getCurrentUser: vi.fn(),
+    getPublicUsersByIds: vi.fn(),
+    getLocalMediaAssetSummary: vi.fn(),
+    listLocalMediaAssets: vi.fn(),
+}));
 
 vi.mock("@/lib/auth/session", () => ({ getCurrentUser: mocks.getCurrentUser }));
 vi.mock("@/lib/auth/store", () => ({ findPublicUserIdsByKeyword: mocks.findPublicUserIdsByKeyword, getPublicUsersByIds: mocks.getPublicUsersByIds }));
 vi.mock("@/lib/server/local-media-storage", () => ({
-    cleanupExpiredLocalMediaAssets: vi.fn(),
-    deleteLocalMediaAssets: vi.fn(),
+    cleanupExpiredLocalMediaAssets: mocks.cleanupExpiredLocalMediaAssets,
+    deleteLocalMediaAssets: mocks.deleteLocalMediaAssets,
     getLocalMediaAssetSummary: mocks.getLocalMediaAssetSummary,
     listLocalMediaAssets: mocks.listLocalMediaAssets,
 }));
 
-import { GET } from "./route";
+import { DELETE, GET } from "./route";
 
 describe("GET /api/admin/generation-assets", () => {
     beforeEach(() => {
@@ -52,5 +60,22 @@ describe("GET /api/admin/generation-assets", () => {
 
         expect(mocks.findPublicUserIdsByKeyword).toHaveBeenCalledWith("0001");
         expect(mocks.listLocalMediaAssets).toHaveBeenCalledWith(expect.objectContaining({ search: "0001", ownerUserIds: ["user-one"] }));
+    });
+
+    it("reports a registered deletion failure as pending instead of deleted", async () => {
+        mocks.getCurrentUser.mockResolvedValueOnce({ id: "admin", role: "admin", status: "active", adminPermissions: ["generation.manage"] });
+        mocks.deleteLocalMediaAssets.mockResolvedValueOnce({ deletedFiles: 0, deletedBytes: 0, blocked: [], pending: [{ id: "asset-one", storageKey: "permanent/image.png" }] });
+
+        const response = await DELETE(
+            new Request("http://localhost/api/admin/generation-assets", {
+                method: "DELETE",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ ids: ["asset-one"] }),
+            }),
+        );
+        const payload = await response.json();
+
+        expect(response.status).toBe(200);
+        expect(payload).toMatchObject({ data: { deletedFiles: 0, pending: [{ id: "asset-one" }] }, msg: "部分媒体文件删除失败，已进入维护重试" });
     });
 });

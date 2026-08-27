@@ -43,6 +43,7 @@ vi.mock("@/lib/server/image-task-store", () => ({
 
 import { maxDuration, POST } from "./route";
 import { createCanvasImageLayerGrant } from "@/lib/server/canvas-image-layer-grant";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 describe("image task route", () => {
     beforeEach(() => {
@@ -110,6 +111,24 @@ describe("image task route", () => {
 
         expect(response.status).toBe(200);
         expect(mocks.withGenerationConcurrencyLimit).toHaveBeenCalledOnce();
+    });
+
+    it("returns a conflict when a referenced media row is already pending deletion", async () => {
+        mocks.withGenerationConcurrencyLimit.mockImplementation(async (_userId, _type, _staleMs, _limit, handler) => handler());
+        mocks.getAuthSettings.mockResolvedValue(imageSettings());
+        mocks.createImageTask.mockRejectedValueOnce(new MediaReferenceWriteConflict("媒体正在删除或已不可用"));
+
+        const response = await POST(
+            imageRequest({
+                kind: "edit",
+                config: { model: "image" },
+                prompt: "继续修改",
+                references: [{ serverUrl: "/api/reference-assets/permanent/2026/08/27/images/source.png" }],
+            }),
+        );
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({ error: "媒体正在删除或已不可用" });
     });
 
     it("lets a verified Canvas layer task bypass ordinary image capacity and persists its class", async () => {

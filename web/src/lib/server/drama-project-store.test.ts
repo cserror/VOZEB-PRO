@@ -2,13 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DramaProject } from "@/lib/drama-project-contract";
 
-const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>(), provider: "file" as "file" | "postgres", postgresQuery: vi.fn(), ensurePostgresSchema: vi.fn() }));
+const mocks = vi.hoisted(() => ({ files: new Map<string, unknown>(), provider: "file" as "file" | "postgres", postgresQuery: vi.fn(), ensurePostgresSchema: vi.fn(), transaction: vi.fn(), registrations: vi.fn() }));
 
 vi.mock("@/lib/server/database", () => ({
     ensurePostgresSchema: mocks.ensurePostgresSchema,
     getDatabaseProvider: vi.fn(() => mocks.provider),
     postgresQuery: mocks.postgresQuery,
+    withPostgresTransaction: mocks.transaction,
 }));
+vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.registrations }));
 vi.mock("@/lib/server/data-adapter", () => ({
     readJsonDataFile: vi.fn(async (name: string, fallback: unknown) => structuredClone(mocks.files.has(name) ? mocks.files.get(name) : fallback)),
     writeJsonDataFile: vi.fn(async (name: string, value: unknown) => {
@@ -24,6 +26,10 @@ describe("drama project file provider", () => {
         mocks.provider = "file";
         mocks.postgresQuery.mockReset();
         mocks.ensurePostgresSchema.mockReset();
+        mocks.transaction.mockReset().mockImplementation(async (handler: (executor: { query: typeof mocks.postgresQuery }) => Promise<unknown>) => handler({ query: mocks.postgresQuery }));
+        mocks.registrations.mockReset().mockImplementation(async (storageKeys: string[]) =>
+            storageKeys.map((storageKey) => ({ storageKey, ownerUserId: "user-one", storageClass: "permanent", deletionStatus: "active" })),
+        );
     });
 
     it("keeps projects isolated by user across create, update and delete", async () => {
@@ -144,6 +150,16 @@ describe("drama project file provider", () => {
 
         await expect(updateDramaProject("user-one", stale, original.updatedAt)).rejects.toMatchObject({ status: 409 });
         await expect(getDramaProject("one", "user-one")).resolves.toMatchObject({ title: "第一处修改" });
+    });
+
+    it("rejects a short-drama save that references media pending deletion", async () => {
+        const original = project("one", "短剧项目");
+        const storageKey = "permanent/drama/pending.webp";
+        await createDramaProject("user-one", original);
+        mocks.registrations.mockResolvedValue([{ storageKey, ownerUserId: "user-one", storageClass: "permanent", deletionStatus: "pending" }]);
+
+        await expect(updateDramaProject("user-one", { ...original, coverStorageKey: storageKey } as DramaProject, original.updatedAt)).rejects.toThrow("媒体正在删除或已不可用");
+        await expect(getDramaProject("one", "user-one")).resolves.toMatchObject({ title: "短剧项目" });
     });
 });
 

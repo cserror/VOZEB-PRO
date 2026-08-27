@@ -107,4 +107,17 @@ describe("CreativeAssetsPanel", () => {
         expect(referenceActionClass).toContain("!text-[11px]");
         expect(markup).not.toContain("勾选");
     });
+
+    it("renders conversation thumbnails from the CDN url", () => {
+        const cdnAsset: CreativeAsset & { displayUrl: string; thumbnailUrl: string } = {
+            ...imageAsset,
+            displayUrl: "https://img-test.paisi.art/cdn-cgi/image/width=1280/result.png",
+            thumbnailUrl: "https://img-test.paisi.art/cdn-cgi/image/width=640/result.png",
+        };
+
+        const markup = renderToStaticMarkup(<ConversationAssets conversationId="conversation-one" assets={[cdnAsset]} selectedAssetIds={[]} onToggle={() => undefined} onPreview={() => undefined} />);
+
+        expect(markup).toContain('src="https://img-test.paisi.art/cdn-cgi/image/width=640/result.png"');
+        expect(markup).not.toContain('src="/api/reference-assets/asset-one');
+    });
 });

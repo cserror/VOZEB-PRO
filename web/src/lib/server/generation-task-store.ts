@@ -1,6 +1,7 @@
-import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
+import { getDatabaseProvider, ensurePostgresSchema, postgresQuery, withPostgresTransaction, type QueryExecutor } from "@/lib/server/database";
 import { resolveGenerationReviewReason } from "@/lib/server/generation-task-review-reason";
 import { readJsonDataFile, withJsonDataFileLock, writeJsonDataFile } from "@/lib/server/data-adapter";
+import { withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 import type {
     GenerationTaskContext,
     GenerationTaskCostAggregate,
@@ -25,8 +26,16 @@ const ACTIVE_CONCURRENCY_PHASES = ["created", "submitting", "submitted", "pollin
 let fileMutationQueue = Promise.resolve();
 const concurrencyQueues = new Map<string, Promise<void>>();
 
-export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number) {
-    return insertTask(type, task, ttlMs);
+export async function createStoredGenerationTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(
+    type: GenerationTaskType,
+    task: T,
+    ttlMs: number,
+    options: { referenceStorageKeys?: string[] } = {},
+) {
+    const referenceStorageKeys = options.referenceStorageKeys || [];
+    if (!referenceStorageKeys.length) return insertTask(type, task, ttlMs);
+    if (getDatabaseProvider() === "postgres") await ensurePostgresSchema();
+    return withActiveMediaReferenceWrite(referenceStorageKeys, { ownerUserId: task.userId }, (executor) => insertTask(type, task, ttlMs, executor));
 }
 
 export async function cleanupExpiredStoredGenerationTasks(input: { limit: number; now?: Date }) {
@@ -874,13 +883,14 @@ async function upsertTask<T extends { id: string; userId: string; status: string
     });
 }
 
-async function insertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number): Promise<T> {
+async function insertTask<T extends { id: string; userId: string; status: string; createdAt: number; updatedAt: number }>(type: GenerationTaskType, task: T, ttlMs: number, executor?: QueryExecutor): Promise<T> {
     const status = normalizeGenerationTaskStatus(task.status);
     const context = normalizeGenerationTaskContext(task as GenerationTaskContext);
     if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
+        if (!executor) await ensurePostgresSchema();
         const values = taskValues(type, task, ttlMs, status, context);
-        const inserted = await postgresQuery<{ payload: T }>(
+        const query: QueryExecutor["query"] = executor ? executor.query.bind(executor) : postgresQuery;
+        const inserted = await query<{ payload: T }>(
             `INSERT INTO generation_tasks (
                 id, user_id, task_type, status, payload, created_at, updated_at, expires_at,
                 conversation_id, run_id, surface, project_id, parent_task_id, attempt_no, client_request_id
@@ -891,7 +901,15 @@ async function insertTask<T extends { id: string; userId: string; status: string
             values,
         );
         if (inserted.rows[0]?.payload) return inserted.rows[0].payload;
-        const existing = context.clientRequestId ? await getStoredGenerationTaskByRequest<T>(type, task.userId, context.clientRequestId, context.attemptNo) : await getStoredGenerationTask<T>(type, task.id);
+        const existingResult = context.clientRequestId
+            ? await query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE user_id = $1 AND task_type = $2 AND client_request_id = $3 AND COALESCE(attempt_no, 0) = $4 AND expires_at > now() LIMIT 1", [
+                  task.userId,
+                  type,
+                  context.clientRequestId,
+                  normalizedAttemptNo(context.attemptNo),
+              ])
+            : await query<{ payload: T }>("SELECT payload FROM generation_tasks WHERE id = $1 AND task_type = $2 AND expires_at > now()", [task.id, type]);
+        const existing = existingResult.rows[0]?.payload;
         if (existing) return existing;
         throw new Error("生成任务写入冲突，请重试");
     }

@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
     withPostgresTransaction: vi.fn(),
     deleteUserLocalMediaAssets: vi.fn(),
     listByUserIdBatch: vi.fn(),
+    getByIds: vi.fn(),
+    listByUserAndStorageKeys: vi.fn(),
     delete: vi.fn(),
 }));
 
@@ -20,7 +22,7 @@ vi.mock("@/lib/server/database", () => ({
 }));
 vi.mock("@/lib/server/local-media-references", () => ({
     collectLocalMediaStorageKeys: vi.fn((value: unknown) => {
-        if (Array.isArray(value)) return value.flatMap((item) => (item && typeof item === "object" && "url" in item ? [String((item as { url: unknown }).url)] : []));
+        if (Array.isArray(value)) return value.flatMap((item) => (item && typeof item === "object" && "storageKey" in item ? [String((item as { storageKey: unknown }).storageKey)] : []));
         return value && typeof value === "object" && "storageKey" in value ? [String((value as { storageKey: unknown }).storageKey)] : [];
     }),
     countLocalMediaReferences: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock("@/lib/server/local-media-storage", () => ({
 }));
 vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistration: vi.fn() }));
 
-import { deleteGenerationLogsByUserId } from "./generation-log-store";
+import { deleteGenerationLogsByUserId, listUserGenerationLogsForDelete } from "./generation-log-store";
 
 describe("generation log user deletion", () => {
     beforeEach(() => {
@@ -42,7 +44,14 @@ describe("generation log user deletion", () => {
         mocks.getAuthSettings.mockResolvedValue({ dataLifecycle: { maintenanceBatchSize: 2 } });
         mocks.ensurePostgresSchema.mockResolvedValue(undefined);
         mocks.withPostgresTransaction.mockImplementation(async (handler: (client: unknown) => Promise<unknown>) => handler({}));
-        mocks.createPostgresRepositories.mockReturnValue({ generationLogs: { listByUserIdBatch: mocks.listByUserIdBatch, delete: mocks.delete } });
+        mocks.createPostgresRepositories.mockReturnValue({
+            generationLogs: {
+                listByUserIdBatch: mocks.listByUserIdBatch,
+                getByIds: mocks.getByIds,
+                listByUserAndStorageKeys: mocks.listByUserAndStorageKeys,
+                delete: mocks.delete,
+            },
+        });
         mocks.deleteUserLocalMediaAssets.mockResolvedValue({ deletedFiles: 0, deletedBytes: 0, blocked: [] });
         mocks.listByUserIdBatch
             .mockResolvedValueOnce([generationLog("log-one", "one.webp"), generationLog("log-two", "two.webp")])
@@ -63,6 +72,18 @@ describe("generation log user deletion", () => {
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["one.webp", "two.webp"]);
         expect(mocks.deleteUserLocalMediaAssets).toHaveBeenCalledWith("user-one", ["three.webp"]);
     });
+
+    it("includes same-user logs that share a stable storage key", async () => {
+        const requested = generationLog("log-requested", "permanent/shared.webp");
+        const shared = generationLog("log-shared", "permanent/shared.webp");
+        mocks.getByIds.mockResolvedValue([requested]);
+        mocks.listByUserAndStorageKeys.mockResolvedValue([requested, shared]);
+
+        await expect(listUserGenerationLogsForDelete(" user-one ", ["log-requested"])).resolves.toEqual([requested, shared]);
+
+        expect(mocks.getByIds).toHaveBeenCalledWith(["log-requested"], "user-one");
+        expect(mocks.listByUserAndStorageKeys).toHaveBeenCalledWith("user-one", ["permanent/shared.webp"]);
+    });
 });
 
 function generationLog(id: string, storageKey: string) {
@@ -82,7 +103,7 @@ function generationLog(id: string, storageKey: string) {
         count: 1,
         successCount: 1,
         failCount: 0,
-        assets: [{ type: "image" as const, url: storageKey }],
+        assets: [{ type: "image" as const, storageKey }],
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
     };

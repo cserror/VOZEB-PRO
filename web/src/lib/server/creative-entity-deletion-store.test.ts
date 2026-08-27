@@ -141,7 +141,7 @@ describe("creative entity deletion file provider", () => {
             if (sql.includes("FROM generation_tasks") && sql.includes("SELECT")) return { rows: [{ id: "run-one", run_id: "run-one", payload: { serverUrl: "/api/generation-log-assets/permanent/task.png" } }] };
             if (sql.includes("FROM generation_logs") && sql.includes("SELECT")) return { rows: [{ id: "log-one", request_snapshot: {} }] };
             if (sql.includes("FROM creative_assets")) return { rows: [{ storage_key: "permanent/asset.png" }] };
-            if (sql.includes("FROM generation_log_assets")) return { rows: [{ server_url: "/api/generation-log-assets/permanent/log.png" }] };
+            if (sql.includes("FROM generation_log_assets")) return { rows: [{ storage_key: "permanent/log.png" }] };
             if (sql.includes("FROM local_media_assets")) return { rows: [{ storage_key: "permanent/registered.png" }] };
             return { rows: [], rowCount: 1 };
         });
@@ -152,6 +152,9 @@ describe("creative entity deletion file provider", () => {
         expect(result).toMatchObject({ deletedConversations: 1, deletedProjects: 0 });
         expect(result.mediaStorageKeys).toEqual(["permanent/asset.png", "permanent/log.png", "permanent/registered.png", "permanent/task.png"]);
         const statements = query.mock.calls.map(([sql]) => String(sql)).join("\n");
+        const generationAssetStatement = query.mock.calls.find(([sql]) => String(sql).includes("FROM generation_log_assets"));
+        expect(String(generationAssetStatement?.[0])).toContain("SELECT storage_key");
+        expect(String(generationAssetStatement?.[0])).not.toMatch(/\b(?:url|remote_url|server_url)\b/);
         for (const table of ["creative_run_events", "generation_logs", "generation_tasks", "creative_conversations"]) expect(statements).toContain(`DELETE FROM ${table}`);
         expect(statements).not.toContain("SELECT *");
     });

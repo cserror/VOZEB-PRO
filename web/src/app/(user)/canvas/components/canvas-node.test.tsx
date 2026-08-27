@@ -76,6 +76,22 @@ describe("CanvasNode image border", () => {
         expect(markup).toContain('decoding="async"');
     });
 
+    it("renders a CDN display url without replacing the stable Canvas media content", () => {
+        const cdnNode = {
+            ...imageNode,
+            metadata: {
+                ...imageNode.metadata,
+                storageKey: "permanent/generated-image.png",
+                displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/generated-image.png",
+            },
+        };
+
+        const markup = renderImageNode({ data: cdnNode });
+
+        expect(markup).toContain('src="https://img.example.com/cdn-cgi/image/width=1280/generated-image.png"');
+        expect(cdnNode.metadata.content).toBe("/api/reference-assets/permanent/generated-image.png");
+    });
+
     it("keeps the blue active border when the image is selected", () => {
         expect(renderImageNode({ isSelected: true })).toContain("border-color:#2f80ff");
     });

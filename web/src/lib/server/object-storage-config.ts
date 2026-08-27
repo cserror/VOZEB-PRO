@@ -1,6 +1,8 @@
 import type { ObjectStorageSettings, ObjectStorageSettingsUpdate } from "@/lib/object-storage-contract";
+import type { ImageDeliveryProvider } from "@/lib/object-storage-contract";
 import { readObjectStorageSettings, writeObjectStorageSettings, type StoredObjectStorageSettings } from "@/lib/server/database/object-storage-repository";
 import { decryptSecretValue, encryptSecretValue } from "@/lib/server/secret-crypto";
+import { hasExternalMediaRegistrations } from "@/lib/server/local-media-registry";
 
 export type ObjectStorageRuntimeConfig = {
     id: "default";
@@ -9,6 +11,8 @@ export type ObjectStorageRuntimeConfig = {
     region: string;
     bucket: string;
     prefix: string;
+    publicBaseUrl: string;
+    imageDeliveryProvider: ImageDeliveryProvider;
     accessKeyId: string;
     secretAccessKey: string;
     forcePathStyle: boolean;
@@ -42,6 +46,8 @@ export async function getObjectStorageAdminSettings(): Promise<ObjectStorageSett
         region: stored.region,
         bucket: stored.bucket,
         prefix: stored.prefix,
+        publicBaseUrl: stored.publicBaseUrl,
+        imageDeliveryProvider: stored.imageDeliveryProvider,
         forcePathStyle: stored.forcePathStyle,
         hasAccessKeyId: Boolean(stored.accessKeyIdCiphertext),
         hasSecretAccessKey: Boolean(stored.secretAccessKeyCiphertext),
@@ -55,10 +61,16 @@ export async function saveObjectStorageAdminSettings(input: ObjectStorageSetting
     const region = text(input.region, 160) || "us-east-1";
     const bucket = normalizeBucket(input.bucket);
     const prefix = normalizeObjectStoragePrefix(input.prefix);
+    const publicBaseUrl = input.publicBaseUrl === undefined ? current.publicBaseUrl : normalizePublicBaseUrl(input.publicBaseUrl);
+    const imageDeliveryProvider = normalizeImageDeliveryProvider(input.imageDeliveryProvider ?? current.imageDeliveryProvider);
     const accessKeyIdCiphertext = resolveSecret(input.accessKeyId, input.clearAccessKeyId, current.accessKeyIdCiphertext);
     const secretAccessKeyCiphertext = resolveSecret(input.secretAccessKey, input.clearSecretAccessKey, current.secretAccessKeyCiphertext);
 
     if (input.enabled && (!bucket || !accessKeyIdCiphertext || !secretAccessKeyCiphertext)) throw new Error("启用外部存储前请填写 Bucket、Access Key 和 Secret Key");
+    if (input.enabled && imageDeliveryProvider === "cloudflare" && !publicBaseUrl) throw new Error("使用 Cloudflare 动态图片前请填写媒体公开域名");
+    if (imageDeliveryProvider === "cloudflare" && publicBaseUrl && new URL(publicBaseUrl).pathname !== "/") throw new Error("Cloudflare 媒体公开域名不能包含路径");
+    const locationChanged = endpoint !== current.endpoint || region !== current.region || bucket !== current.bucket || prefix !== current.prefix || (input.forcePathStyle === true) !== current.forcePathStyle;
+    if (locationChanged && (await hasExternalMediaRegistrations())) throw new Error("已有对象媒体，不能直接修改 Endpoint、Region、Bucket、Prefix 或 path-style；请先完成显式迁移或删除存量对象");
     const now = new Date().toISOString();
     await writeObjectStorageSettings({
         id: "default",
@@ -67,6 +79,8 @@ export async function saveObjectStorageAdminSettings(input: ObjectStorageSetting
         region,
         bucket,
         prefix,
+        publicBaseUrl,
+        imageDeliveryProvider,
         accessKeyIdCiphertext,
         secretAccessKeyCiphertext,
         forcePathStyle: input.forcePathStyle === true,
@@ -99,10 +113,16 @@ function toRuntimeConfig(stored: StoredObjectStorageSettings): ObjectStorageRunt
         region: stored.region,
         bucket: stored.bucket,
         prefix: stored.prefix,
+        publicBaseUrl: stored.publicBaseUrl,
+        imageDeliveryProvider: stored.imageDeliveryProvider,
         accessKeyId: stored.accessKeyIdCiphertext ? decryptSecretValue(stored.accessKeyIdCiphertext) : "",
         secretAccessKey: stored.secretAccessKeyCiphertext ? decryptSecretValue(stored.secretAccessKeyCiphertext) : "",
         forcePathStyle: stored.forcePathStyle,
     };
+}
+
+function normalizeImageDeliveryProvider(value: unknown): ImageDeliveryProvider {
+    return value === "cloudflare" ? "cloudflare" : "none";
 }
 
 function resolveSecret(value: unknown, clear: unknown, previous: string) {
@@ -120,6 +140,18 @@ function normalizeEndpoint(value: unknown) {
         return url.toString().replace(/\/$/, "");
     } catch {
         throw new Error("Endpoint 必须是有效的 HTTP 或 HTTPS 地址");
+    }
+}
+
+function normalizePublicBaseUrl(value: unknown) {
+    const input = text(value, 2000).replace(/\/+$/, "");
+    if (!input) return "";
+    try {
+        const url = new URL(input);
+        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) throw new Error();
+        return url.toString().replace(/\/$/, "");
+    } catch {
+        throw new Error("媒体公开域名必须是有效的 HTTPS 地址");
     }
 }
 

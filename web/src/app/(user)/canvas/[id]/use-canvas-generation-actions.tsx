@@ -827,7 +827,7 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 position: { x: center.x - config.width / 2, y: center.y - config.height / 2 },
                 width: config.width,
                 height: config.height,
-                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), prompt: image.prompt },
+                metadata: { ...imageMetadata({ ...storedImage, width: meta.width, height: meta.height }), displayUrl: image.displayUrl, thumbnailUrl: image.thumbnailUrl, prompt: image.prompt },
             };
 
             setNodes((prev) => [...prev, node]);
@@ -893,7 +893,16 @@ export function useCanvasGenerationActions({ state, tasks, interactions }: { sta
                 ]);
                 setSelectedNodeIds(new Set([id]));
             } else {
-                insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey, remoteUrl: payload.remoteUrl, serverUrl: payload.serverUrl });
+                insertAssistantImage({
+                    id: `asset-${Date.now()}`,
+                    prompt: payload.title,
+                    dataUrl: payload.dataUrl,
+                    storageKey: payload.storageKey,
+                    remoteUrl: payload.remoteUrl,
+                    serverUrl: payload.serverUrl,
+                    displayUrl: payload.displayUrl,
+                    thumbnailUrl: payload.thumbnailUrl,
+                });
             }
         },
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],

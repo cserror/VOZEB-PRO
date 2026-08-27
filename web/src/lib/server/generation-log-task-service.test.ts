@@ -10,6 +10,7 @@ const previousProvider = process.env.VOZEB_PRO_DATABASE_PROVIDER;
 
 let service: typeof import("./generation-log-task-service");
 let store: typeof import("./generation-log-store");
+let mediaRegistry: typeof import("./local-media-registry");
 
 describe("generation log task service", () => {
     beforeAll(async () => {
@@ -18,11 +19,24 @@ describe("generation log task service", () => {
         vi.resetModules();
         service = await import("./generation-log-task-service");
         store = await import("./generation-log-store");
+        mediaRegistry = await import("./local-media-registry");
     });
 
     beforeEach(async () => {
         await rm(dataDir, { recursive: true, force: true });
         await mkdir(dataDir, { recursive: true });
+        for (const name of ["a", "b", "c", "late", "first", "second", "agent", "success"]) {
+            await mediaRegistry.registerLocalMediaAsset({
+                storageKey: assetKey(name),
+                scope: "generation",
+                storageClass: "permanent",
+                type: "image",
+                ownerUserId: "user-one",
+                source: "test",
+                mimeType: "image/png",
+                bytes: 1,
+            });
+        }
     });
 
     afterAll(async () => {
@@ -52,9 +66,9 @@ describe("generation log task service", () => {
 
         const log = await getLog("log-concurrent");
         expect(log?.assets).toHaveLength(2);
-        expect(Object.fromEntries(log?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex === undefined ? undefined : log.assets[slot.assetIndex]?.url]) || [])).toEqual({
-            "slot-a": assetUrl("a"),
-            "slot-b": assetUrl("b"),
+        expect(Object.fromEntries(log?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex === undefined ? undefined : log.assets[slot.assetIndex]?.storageKey]) || [])).toEqual({
+            "slot-a": assetKey("a"),
+            "slot-b": assetKey("b"),
         });
     });
 
@@ -65,7 +79,7 @@ describe("generation log task service", () => {
         await recordResult("log-delete", "slot-c", "task-c", "success", false, assetUrl("c"));
 
         const deleted = await service.deleteGenerationLogResultsForUser("user-one", "log-delete", ["slot-b"]);
-        expect(deleted?.assets.map((asset) => asset.url)).toEqual([assetUrl("a"), assetUrl("c")]);
+        expect(deleted?.assets.map((asset) => asset.storageKey)).toEqual([assetKey("a"), assetKey("c")]);
         expect(deleted?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex])).toEqual([
             ["slot-a", 0],
             ["slot-c", 1],
@@ -73,7 +87,7 @@ describe("generation log task service", () => {
 
         const late = await recordResult("log-delete", "slot-b", "task-b-late", "success", false, assetUrl("late"));
         expect(late.log?.requestSnapshot?.slots.map((slot) => slot.id)).toEqual(["slot-a", "slot-c"]);
-        expect(late.log?.assets.map((asset) => asset.url)).toEqual([assetUrl("a"), assetUrl("c")]);
+        expect(late.log?.assets.map((asset) => asset.storageKey)).toEqual([assetKey("a"), assetKey("c")]);
     });
 
     it("replays the same completed server task without duplicating assets", async () => {
@@ -113,7 +127,7 @@ describe("generation log task service", () => {
             createdAt: Date.now(),
         });
 
-        expect(result.log?.assets.map((asset) => asset.url)).toEqual([assetUrl("first"), assetUrl("second")]);
+        expect(result.log?.assets.map((asset) => asset.storageKey)).toEqual([assetKey("first"), assetKey("second")]);
         expect(result.log?.requestSnapshot?.slots.map((slot) => [slot.id, slot.assetIndex])).toEqual([
             ["slot-a", 0],
             ["slot-a:output:2", 1],
@@ -181,6 +195,54 @@ describe("generation log task service", () => {
         await expect(service.renameGenerationLogForUser("user-two", "log-owned", "越权标题")).rejects.toBeInstanceOf(service.GenerationLogOwnershipError);
         await expect(recordResult("log-owned", "slot-a", "task-two", "failed", false, undefined, "user-two")).rejects.toBeInstanceOf(service.GenerationLogOwnershipError);
     });
+
+    it("rejects a generation log reference after its media enters pending deletion", async () => {
+        const storageKey = assetKey("pending");
+        await mediaRegistry.registerLocalMediaAsset({
+            storageKey,
+            scope: "generation",
+            storageClass: "permanent",
+            type: "image",
+            ownerUserId: "user-one",
+            source: "image-workbench",
+            mimeType: "image/png",
+            bytes: 1,
+            deletionStatus: "pending",
+        });
+
+        await expect(
+            store.recordGenerationLog({
+                id: "log-pending-media",
+                userId: "user-one",
+                username: "user",
+                displayName: "User",
+                kind: "image",
+                source: "image-workbench",
+                status: "success",
+                title: "待删除媒体",
+                prompt: "提示词",
+                assets: [{ type: "image", storageKey }],
+            }),
+        ).rejects.toThrow("媒体正在删除或已不可用");
+    });
+
+    it("rejects a task result when its media enters pending deletion", async () => {
+        const storageKey = assetKey("pending-task");
+        await createDraft("log-pending-task-media", ["slot-a"]);
+        await mediaRegistry.registerLocalMediaAsset({
+            storageKey,
+            scope: "generation",
+            storageClass: "permanent",
+            type: "image",
+            ownerUserId: "user-one",
+            source: "image-workbench",
+            mimeType: "image/png",
+            bytes: 1,
+            deletionStatus: "pending",
+        });
+
+        await expect(recordResult("log-pending-task-media", "slot-a", "task-pending", "success", false, assetUrl("pending-task"))).rejects.toThrow("媒体正在删除或已不可用");
+    });
 });
 
 function createDraft(id: string, slotIds: string[]) {
@@ -235,4 +297,8 @@ async function getLog(id: string) {
 
 function assetUrl(name: string) {
     return `/api/generation-log-assets/permanent/test/${name}.png`;
+}
+
+function assetKey(name: string) {
+    return `permanent/test/${name}.png`;
 }

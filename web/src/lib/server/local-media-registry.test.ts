@@ -16,12 +16,15 @@ vi.mock("@/lib/server/database", () => ({
 vi.mock("@/lib/server/data-adapter", () => ({ readJsonDataFile: mocks.readJsonDataFile, writeJsonDataFile: mocks.writeJsonDataFile }));
 
 import {
+    getLocalMediaRegistrations,
+    hasExternalMediaRegistrations,
     getLocalMediaRegistrationSummary,
     listExpiredLocalMediaRegistrations,
     listFileLocalMediaRegistrations,
     listLocalMediaMigrationRegistrations,
     listLocalMediaRegistrationPage,
     listLocalMediaRegistrationsForDeletion,
+    listPendingLocalMediaDeletions,
     listLocalMediaRegistrationsForUser,
     listLocalMediaRegistrationsForUserPage,
 } from "./local-media-registry";
@@ -36,6 +39,36 @@ describe("listLocalMediaRegistrationsForUser", () => {
 
         expect(mocks.ensurePostgresSchema).not.toHaveBeenCalled();
         expect(mocks.postgresQuery).not.toHaveBeenCalled();
+    });
+
+    it("locks multiple media registrations in stable key order", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        const query = vi.fn().mockResolvedValue({ rows: [] });
+
+        await getLocalMediaRegistrations(["permanent/two.png", "permanent/one.png"], { executor: { query } as never, forUpdate: true });
+
+        expect(query).toHaveBeenCalledWith(expect.stringMatching(/ORDER BY storage_key ASC FOR UPDATE/), [["permanent/two.png", "permanent/one.png"], ""]);
+    });
+
+    it("checks for stored object registrations with one bounded PostgreSQL lookup", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValue({ rows: [{ exists: 1 }] });
+
+        await expect(hasExternalMediaRegistrations()).resolves.toBe(true);
+
+        expect(mocks.postgresQuery).toHaveBeenCalledWith("SELECT 1 FROM local_media_assets WHERE storage_provider = 'object' LIMIT 1");
+    });
+
+    it("checks file-backed registrations without changing the registry", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("file");
+        mocks.readJsonDataFile.mockResolvedValue({
+            version: 1,
+            assets: [{ storageKey: "permanent/object.png", storageProvider: "object", createdAt: "2026-08-27T00:00:00.000Z" }],
+        });
+
+        await expect(hasExternalMediaRegistrations()).resolves.toBe(true);
+
+        expect(mocks.writeJsonDataFile).not.toHaveBeenCalled();
     });
 
     it("filters the file provider before returning registrations", async () => {
@@ -149,6 +182,18 @@ describe("listLocalMediaRegistrationsForUser", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("storage_provider = 'local'"), [40, 80]);
         expect(String(mocks.postgresQuery.mock.calls[0][0])).toContain("LIMIT $1 OFFSET $2");
         expect(String(mocks.postgresQuery.mock.calls[1][0])).toContain("count(*) AS total");
+    });
+
+    it("loads a bounded oldest-first batch of pending media deletions", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        mocks.postgresQuery.mockResolvedValue({ rows: [] });
+
+        await listPendingLocalMediaDeletions(25);
+
+        expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("deletion_status = 'pending'"), [25]);
+        expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("ORDER BY deletion_requested_at ASC, storage_key ASC");
+        expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("LIMIT $1");
+        expect(String(mocks.postgresQuery.mock.calls[0]?.[0])).toContain("deletion_attempts < 2");
     });
 
     it("prevents the file-provider full reader from querying PostgreSQL", async () => {

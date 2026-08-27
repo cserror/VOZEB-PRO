@@ -21,6 +21,10 @@ export type LocalMediaRegistration = {
     externalStorageId?: string;
     externalObjectKey?: string;
     externalSyncedAt?: string;
+    deletionStatus?: "active" | "pending";
+    deletionRequestedAt?: string;
+    deletionAttempts?: number;
+    deletionLastError?: string;
     createdAt: string;
     expiresAt?: string;
 };
@@ -49,19 +53,26 @@ export function isLocalMediaRegistrationExpired(registration: Pick<LocalMediaReg
     return registration.storageClass === "temporary" && Boolean(registration.expiresAt) && Date.parse(registration.expiresAt || "") <= now;
 }
 
+export function isLocalMediaPendingDeletion(registration: Pick<LocalMediaRegistration, "deletionStatus">) {
+    return registration.deletionStatus === "pending";
+}
+
 const FILE_NAME = "local-media-assets.json";
+const MAX_AUTOMATIC_DELETION_ATTEMPTS = 2;
 let mutationQueue = Promise.resolve();
 
-export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration, "createdAt"> & { createdAt?: string }) {
+export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration, "createdAt"> & { createdAt?: string }, options: { executor?: QueryExecutor } = {}) {
     const asset = normalizeRegistration(input);
     if (getDatabaseProvider() === "postgres") {
-        await ensurePostgresSchema();
-        await postgresQuery(
+        if (!options.executor) await ensurePostgresSchema();
+        const query: QueryExecutor["query"] = options.executor ? options.executor.query.bind(options.executor) : postgresQuery;
+        await query(
             `INSERT INTO local_media_assets (
                 storage_key, scope, storage_class, type, owner_user_id, original_name, source,
                 conversation_id, run_id, task_id, project_id, mime_type, bytes, storage_provider,
-                external_storage_id, external_object_key, external_synced_at, created_at, expires_at
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+                external_storage_id, external_object_key, external_synced_at, deletion_status,
+                deletion_requested_at, deletion_attempts, deletion_last_error, created_at, expires_at
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
              ON CONFLICT (storage_key) DO UPDATE SET
                 owner_user_id = EXCLUDED.owner_user_id, original_name = COALESCE(EXCLUDED.original_name, local_media_assets.original_name),
                 source = EXCLUDED.source, conversation_id = COALESCE(EXCLUDED.conversation_id, local_media_assets.conversation_id),
@@ -69,7 +80,9 @@ export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration
                 project_id = COALESCE(EXCLUDED.project_id, local_media_assets.project_id), mime_type = EXCLUDED.mime_type,
                 bytes = EXCLUDED.bytes, storage_provider = EXCLUDED.storage_provider,
                 external_storage_id = EXCLUDED.external_storage_id, external_object_key = EXCLUDED.external_object_key,
-                external_synced_at = EXCLUDED.external_synced_at, expires_at = EXCLUDED.expires_at`,
+                external_synced_at = EXCLUDED.external_synced_at, deletion_status = EXCLUDED.deletion_status,
+                deletion_requested_at = EXCLUDED.deletion_requested_at, deletion_attempts = EXCLUDED.deletion_attempts,
+                deletion_last_error = EXCLUDED.deletion_last_error, expires_at = EXCLUDED.expires_at`,
             [
                 asset.storageKey,
                 asset.scope,
@@ -88,6 +101,10 @@ export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration
                 asset.externalStorageId || null,
                 asset.externalObjectKey || null,
                 asset.externalSyncedAt ? new Date(asset.externalSyncedAt) : null,
+                asset.deletionStatus,
+                asset.deletionRequestedAt ? new Date(asset.deletionRequestedAt) : null,
+                asset.deletionAttempts,
+                asset.deletionLastError || null,
                 new Date(asset.createdAt),
                 asset.expiresAt ? new Date(asset.expiresAt) : null,
             ],
@@ -96,6 +113,15 @@ export async function registerLocalMediaAsset(input: Omit<LocalMediaRegistration
     }
     await mutateRegistry((db) => ({ ...db, assets: [asset, ...db.assets.filter((item) => item.storageKey !== asset.storageKey)] }));
     return asset;
+}
+
+export async function hasExternalMediaRegistrations() {
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery("SELECT 1 FROM local_media_assets WHERE storage_provider = 'object' LIMIT 1");
+        return result.rows.length > 0;
+    }
+    return (await readRegistry()).assets.some((item) => item.storageProvider === "object");
 }
 
 export async function getLocalMediaRegistration(storageKey: string) {
@@ -120,7 +146,7 @@ export async function getLocalMediaRegistrations(storageKeys: string[], options:
             `SELECT * FROM local_media_assets
              WHERE storage_key = ANY($1::text[])
                AND ($2::text = '' OR owner_user_id = $2)
-             ${options.forUpdate ? "FOR UPDATE" : ""}`,
+             ${options.forUpdate ? "ORDER BY storage_key ASC FOR UPDATE" : ""}`,
             [keys, ownerUserId],
         );
         return result.rows.map(mapRegistration);
@@ -142,6 +168,7 @@ export async function listExpiredLocalMediaRegistrations(limit = 100) {
         const result = await postgresQuery(
             `SELECT * FROM local_media_assets
              WHERE storage_class = 'temporary' AND expires_at IS NOT NULL AND expires_at <= now()
+               AND deletion_status = 'active'
              ORDER BY expires_at ASC, storage_key ASC
              LIMIT $1`,
             [pageSize],
@@ -149,7 +176,7 @@ export async function listExpiredLocalMediaRegistrations(limit = 100) {
         return result.rows.map(mapRegistration);
     }
     return (await readRegistry()).assets
-        .filter((asset) => asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now())
+        .filter((asset) => asset.deletionStatus !== "pending" && asset.storageClass === "temporary" && asset.expiresAt && Date.parse(asset.expiresAt) <= Date.now())
         .toSorted((left, right) => String(left.expiresAt).localeCompare(String(right.expiresAt)) || left.storageKey.localeCompare(right.storageKey))
         .slice(0, pageSize);
 }
@@ -160,12 +187,14 @@ export async function listLocalMediaMigrationRegistrations(input: { limit?: numb
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         const [itemsResult, totalResult] = await Promise.all([
-            postgresQuery("SELECT * FROM local_media_assets WHERE storage_provider = 'local' ORDER BY created_at ASC, storage_key ASC LIMIT $1 OFFSET $2", [limit, offset]),
-            postgresQuery<{ total: string | number }>("SELECT count(*) AS total FROM local_media_assets WHERE storage_provider = 'local'"),
+            postgresQuery("SELECT * FROM local_media_assets WHERE storage_provider = 'local' AND deletion_status = 'active' ORDER BY created_at ASC, storage_key ASC LIMIT $1 OFFSET $2", [limit, offset]),
+            postgresQuery<{ total: string | number }>("SELECT count(*) AS total FROM local_media_assets WHERE storage_provider = 'local' AND deletion_status = 'active'"),
         ]);
         return { items: itemsResult.rows.map(mapRegistration), total: Number(totalResult.rows[0]?.total || 0) };
     }
-    const items = (await readRegistry()).assets.filter((item) => item.storageProvider !== "object").toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.storageKey.localeCompare(right.storageKey));
+    const items = (await readRegistry()).assets
+        .filter((item) => item.storageProvider !== "object" && item.deletionStatus !== "pending")
+        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt) || left.storageKey.localeCompare(right.storageKey));
     return { items: items.slice(offset, offset + limit), total: items.length };
 }
 
@@ -301,6 +330,90 @@ export async function deleteLocalMediaRegistrations(storageKeys: string[]) {
     return deleted;
 }
 
+export async function markLocalMediaDeletionPending(storageKeys: string[], options: { executor?: QueryExecutor; requestedAt?: string } = {}) {
+    const keys = Array.from(new Set(storageKeys.map(normalizeKey).filter(Boolean)));
+    if (!keys.length) return [];
+    const requestedAt = validIso(options.requestedAt) || new Date().toISOString();
+    if (getDatabaseProvider() === "postgres") {
+        if (!options.executor) await ensurePostgresSchema();
+        const query: QueryExecutor["query"] = options.executor ? options.executor.query.bind(options.executor) : postgresQuery;
+        const result = await query(
+            `UPDATE local_media_assets
+             SET deletion_status = 'pending', deletion_requested_at = coalesce(deletion_requested_at, $2::timestamptz)
+             WHERE storage_key = ANY($1::text[])
+             RETURNING *`,
+            [keys, new Date(requestedAt)],
+        );
+        return result.rows.map(mapRegistration);
+    }
+    const marked: LocalMediaRegistration[] = [];
+    await mutateRegistry((db) => {
+        const assets = db.assets.map((item) => {
+            if (!keys.includes(item.storageKey)) return item;
+            const next = normalizeRegistration({ ...item, deletionStatus: "pending", deletionRequestedAt: item.deletionRequestedAt || requestedAt });
+            marked.push(next);
+            return next;
+        });
+        return { ...db, assets };
+    });
+    return marked;
+}
+
+export async function recordLocalMediaDeletionFailure(storageKey: string, error: unknown) {
+    const key = normalizeKey(storageKey);
+    if (!key) return null;
+    const message = text(error instanceof Error ? error.message : String(error || "媒体删除失败"), 1000) || "媒体删除失败";
+    const requestedAt = new Date().toISOString();
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `UPDATE local_media_assets
+             SET deletion_status = 'pending', deletion_requested_at = coalesce(deletion_requested_at, $2::timestamptz),
+                 deletion_attempts = deletion_attempts + 1, deletion_last_error = $3
+             WHERE storage_key = $1
+             RETURNING *`,
+            [key, new Date(requestedAt), message],
+        );
+        return result.rows[0] ? mapRegistration(result.rows[0]) : null;
+    }
+    let updated: LocalMediaRegistration | null = null;
+    await mutateRegistry((db) => ({
+        ...db,
+        assets: db.assets.map((item) => {
+            if (item.storageKey !== key) return item;
+            updated = normalizeRegistration({
+                ...item,
+                deletionStatus: "pending",
+                deletionRequestedAt: item.deletionRequestedAt || requestedAt,
+                deletionAttempts: (item.deletionAttempts || 0) + 1,
+                deletionLastError: message,
+            });
+            return updated;
+        }),
+    }));
+    return updated;
+}
+
+export async function listPendingLocalMediaDeletions(limit = 100) {
+    const pageSize = boundedBatchSize(limit, 500, 100);
+    if (getDatabaseProvider() === "postgres") {
+        await ensurePostgresSchema();
+        const result = await postgresQuery(
+            `SELECT * FROM local_media_assets
+             WHERE deletion_status = 'pending' AND deletion_attempts < ${MAX_AUTOMATIC_DELETION_ATTEMPTS}
+             ORDER BY deletion_requested_at ASC, storage_key ASC
+             LIMIT $1`,
+            [pageSize],
+        );
+        return result.rows.map(mapRegistration);
+    }
+    return (await readRegistry()).assets
+        .filter((item) => item.deletionStatus === "pending" && (item.deletionAttempts || 0) < MAX_AUTOMATIC_DELETION_ATTEMPTS)
+        .toSorted((left, right) => String(left.deletionRequestedAt || left.createdAt).localeCompare(String(right.deletionRequestedAt || right.createdAt)) || left.storageKey.localeCompare(right.storageKey))
+        .slice(0, pageSize)
+        .map(normalizeRegistration);
+}
+
 function normalizeRegistration(input: Omit<LocalMediaRegistration, "createdAt"> & { createdAt?: string }): LocalMediaRegistration {
     return {
         storageKey: normalizeKey(input.storageKey),
@@ -320,6 +433,10 @@ function normalizeRegistration(input: Omit<LocalMediaRegistration, "createdAt"> 
         externalStorageId: optionalText(input.externalStorageId, 160),
         externalObjectKey: optionalText(input.externalObjectKey, 1000),
         externalSyncedAt: validIso(input.externalSyncedAt),
+        deletionStatus: input.deletionStatus === "pending" ? "pending" : "active",
+        deletionRequestedAt: validIso(input.deletionRequestedAt),
+        deletionAttempts: Math.max(0, Math.floor(Number(input.deletionAttempts) || 0)),
+        deletionLastError: optionalText(input.deletionLastError, 1000),
         createdAt: validIso(input.createdAt) || new Date().toISOString(),
         expiresAt: validIso(input.expiresAt),
     };
@@ -344,6 +461,10 @@ function mapRegistration(row: Record<string, unknown>): LocalMediaRegistration {
         externalStorageId: optionalText(row.external_storage_id, 160),
         externalObjectKey: optionalText(row.external_object_key, 1000),
         externalSyncedAt: row.external_synced_at ? databaseIso(row.external_synced_at) : undefined,
+        deletionStatus: row.deletion_status === "pending" ? "pending" : "active",
+        deletionRequestedAt: row.deletion_requested_at ? databaseIso(row.deletion_requested_at) : undefined,
+        deletionAttempts: Number(row.deletion_attempts) || 0,
+        deletionLastError: optionalText(row.deletion_last_error, 1000),
         createdAt: databaseIso(row.created_at),
         expiresAt: row.expires_at ? databaseIso(row.expires_at) : undefined,
     });

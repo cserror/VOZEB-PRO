@@ -4,7 +4,7 @@ import { canvasThemes } from "@/lib/canvas-theme";
 import type { Asset } from "@/lib/library-asset-contract";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { libraryAssetToInsertPayload } from "./canvas-asset-insert";
-import { canvasProjectMenuItemStyle, collectCanvasPanelMedia } from "./canvas-assets-panel";
+import { canvasProjectMenuItemStyle, collectCanvasPanelMedia, libraryAssetMediaPreview } from "./canvas-assets-panel";
 
 describe("Canvas assets panel", () => {
     it("keeps only displayable image and video nodes in canvas order", () => {
@@ -26,6 +26,25 @@ describe("Canvas assets panel", () => {
         expect(libraryAssetToInsertPayload(asset("image"))).toMatchObject({ kind: "image", title: "image", dataUrl: "/image.webp", storageKey: "image-key" });
         expect(libraryAssetToInsertPayload(asset("video"))).toMatchObject({ kind: "video", title: "video", url: "/video.mp4", width: 1280, height: 720 });
         expect(libraryAssetToInsertPayload(asset("audio"))).toMatchObject({ kind: "audio", title: "audio", url: "/audio.mp3", durationMs: 3000 });
+    });
+
+    it("keeps CDN urls for Canvas rendering while insertion preserves the stable media identity", () => {
+        const image = {
+            ...asset("image"),
+            displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+        } as Asset;
+
+        expect(libraryAssetMediaPreview(image)).toMatchObject({
+            url: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+        });
+        expect(libraryAssetToInsertPayload(image)).toMatchObject({
+            dataUrl: "/image.webp",
+            displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+            storageKey: "image-key",
+        });
     });
 
     it("keeps canvas dropdown items transparent until pointer or keyboard focus moves onto them", () => {

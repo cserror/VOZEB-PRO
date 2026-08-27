@@ -5,6 +5,7 @@ import type { TextAreaRef } from "antd/es/input/TextArea";
 import { ArrowUp, AtSign, Boxes, Check, ChevronDown, ChevronLeft, ChevronRight, FileAudio, FileVideo, ImageIcon, Plus, Sparkles, Square, WandSparkles, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type MouseEventHandler, type PointerEventHandler, type RefObject, type WheelEvent } from "react";
 
+import { creativeAssetDisplayUrl, creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences } from "@/lib/creative-runtime-contract";
 import { creativeAssetReferenceAliases } from "@/lib/creative-asset-references";
 import { clipboardImageFiles } from "@/lib/clipboard-image-files";
@@ -629,7 +630,7 @@ function ComposerMentionPreview({ segments, assetsById, previewRef }: { segments
                 const asset = segment.assetId ? assetsById.get(segment.assetId) : undefined;
                 if (!segment.referenced || !asset) return <span key={`${index}-${segment.text}`}>{segment.text}</span>;
                 const coverUrl = asset.type === "video" && typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : undefined;
-                const previewUrl = asset.type === "image" ? asset.serverUrl || asset.remoteUrl : coverUrl;
+                const previewUrl = asset.type === "image" ? creativeAssetThumbnailUrl(asset) : coverUrl;
                 const Icon = asset.type === "video" ? FileVideo : asset.type === "audio" ? FileAudio : asset.type === "image" ? ImageIcon : Sparkles;
                 return (
                     <span key={`${asset.id}-${index}`} data-testid="creative-composer-reference-chip" data-asset-id={asset.id} title={asset.title} className="relative inline-block align-baseline font-normal text-transparent">
@@ -650,7 +651,7 @@ function ComposerMentionPreview({ segments, assetsById, previewRef }: { segments
 }
 
 function ComposerMediaThumbnail({ asset, compact = false, onRemove }: { asset: CreativeAsset; compact?: boolean; onRemove: (id: string) => void }) {
-    const previewUrl = asset.serverUrl || asset.remoteUrl || "";
+    const previewUrl = asset.type === "image" ? creativeAssetThumbnailUrl(asset) : creativeAssetDisplayUrl(asset);
     return (
         <div
             className={cn("relative shrink-0 border border-[#dfe4e8] bg-[#f4f6f8] shadow-[0_2px_8px_rgba(38,49,65,0.08)] dark:border-[#3b434d] dark:bg-[#242930] dark:shadow-black/20", compact ? "size-11 rounded-lg" : "size-12 rounded-lg")}

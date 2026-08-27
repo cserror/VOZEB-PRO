@@ -23,6 +23,7 @@ export type VideoTask = GenerationTaskContext & {
     generationLogParameters?: GenerationLogSnapshotParameters;
     source?: string;
     prompt?: string;
+    referenceStorageKeys?: string[];
     attempts?: GenerationAttempt[];
     polling?: { lastAttemptAt?: number; nextAttemptAt?: number };
     result?: { url?: string; remoteUrl?: string; mimeType?: string; durationMs?: number };
@@ -30,9 +31,15 @@ export type VideoTask = GenerationTaskContext & {
     retryable?: boolean;
 };
 
-export async function createVideoTask(input: Omit<VideoTask, "id" | "status" | "createdAt" | "updatedAt">) {
+export async function createVideoTask(input: Omit<VideoTask, "id" | "status" | "createdAt" | "updatedAt">, options: { referenceStorageKeys?: string[] } = {}) {
     const now = Date.now();
-    return createStoredGenerationTask("video", { ...input, id: randomUUID(), status: "running" as const, createdAt: now, updatedAt: now }, GENERATION_TASK_RETENTION_MS);
+    const referenceStorageKeys = Array.from(new Set((options.referenceStorageKeys || []).map((key) => key.trim()).filter(Boolean)));
+    return createStoredGenerationTask(
+        "video",
+        { ...input, ...(referenceStorageKeys.length ? { referenceStorageKeys } : {}), id: randomUUID(), status: "running" as const, createdAt: now, updatedAt: now },
+        GENERATION_TASK_RETENTION_MS,
+        { referenceStorageKeys },
+    );
 }
 
 export async function getVideoTask(id: string) {

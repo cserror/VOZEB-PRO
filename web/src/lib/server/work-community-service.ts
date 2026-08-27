@@ -143,7 +143,7 @@ export async function getPublicCreatorPage(usernameValue: unknown, viewerUserIdV
     const last = works.items.at(-1);
     return {
         profile: { ...publicCreatorProfile(profile), following, canFollow: viewerUserId !== profile.userId && !blocked },
-        items: works.items.map(publicGalleryItem),
+        items: works.items.map((item) => publicGalleryItem(item)),
         nextCursor: works.hasMore && last ? encodeCursor({ publishedAt: last.publishedAt, id: last.workId }) : undefined,
     };
 }

@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
     updateCanvasProject: vi.fn(),
     updateCanvasProjectMutationPatch: vi.fn(),
     deleteUserMediaAssetsCascade: vi.fn(),
+    resolveMediaDisplayUrls: vi.fn(),
 }));
 
 vi.mock("@/lib/server/creative-runtime-store", () => ({ createCreativeConversation: mocks.createCreativeConversation }));
@@ -30,8 +31,9 @@ vi.mock("@/lib/server/creative-entity-deletion-store", () => ({
     deleteCanvasAssistantConversationAggregates: mocks.deleteCanvasAssistantConversationAggregates,
 }));
 vi.mock("@/lib/server/user-media-deletion-service", () => ({ deleteUserMediaAssetsCascade: mocks.deleteUserMediaAssetsCascade }));
+vi.mock("@/lib/server/media-display-url", () => ({ resolveMediaDisplayUrls: mocks.resolveMediaDisplayUrls }));
 
-import { createCanvasProjectForUser, deleteCanvasAssistantConversationsForUser, deleteCanvasProjectsForUser, updateCanvasProjectForUser } from "./canvas-project-service";
+import { createCanvasProjectForUser, deleteCanvasAssistantConversationsForUser, deleteCanvasProjectsForUser, getCanvasProjectForUser, updateCanvasProjectForUser } from "./canvas-project-service";
 
 describe("canvas project service lifecycle", () => {
     beforeEach(() => {
@@ -45,6 +47,86 @@ describe("canvas project service lifecycle", () => {
             canvasAssistantState: { chatSessions: [assistantSession("session-new")], activeChatId: "session-new" },
         });
         mocks.getCanvasProject.mockResolvedValue(null);
+        mocks.resolveMediaDisplayUrls.mockResolvedValue(new Map());
+    });
+
+    it("adds current CDN display urls to Canvas nodes and Agent references without replacing stable urls", async () => {
+        const current = {
+            ...project(),
+            nodes: [
+                {
+                    id: "image",
+                    type: "image",
+                    title: "图片",
+                    position: { x: 0, y: 0 },
+                    width: 320,
+                    height: 240,
+                    metadata: { content: "/api/reference-assets/permanent/image.webp", storageKey: "permanent/image.webp" },
+                },
+            ],
+            chatSessions: [
+                {
+                    ...assistantSession("session-one"),
+                    messages: [
+                        {
+                            id: "message",
+                            role: "user",
+                            text: "参考",
+                            references: [{ id: "reference", type: "image", title: "图片", dataUrl: "/api/reference-assets/permanent/image.webp", storageKey: "permanent/image.webp" }],
+                        },
+                    ],
+                },
+            ],
+        } as CanvasProject;
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.resolveMediaDisplayUrls.mockResolvedValue(
+            new Map([
+                [
+                    "permanent/image.webp",
+                    {
+                        displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+                        thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+                    },
+                ],
+            ]),
+        );
+
+        const result = await getCanvasProjectForUser("user-one", "canvas-one");
+
+        expect(result.nodes[0]?.metadata).toMatchObject({
+            content: "/api/reference-assets/permanent/image.webp",
+            displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+            storageKey: "permanent/image.webp",
+        });
+        expect(result.chatSessions[0]?.messages[0]?.references?.[0]).toMatchObject({
+            dataUrl: "/api/reference-assets/permanent/image.webp",
+            displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/image.webp",
+            thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/image.webp",
+            storageKey: "permanent/image.webp",
+        });
+        expect(mocks.resolveMediaDisplayUrls).toHaveBeenCalledWith(["permanent/image.webp"], { thumbnailWidth: 640 });
+    });
+
+    it("keeps stable Canvas media usable when display url resolution fails", async () => {
+        const current = {
+            ...project(),
+            nodes: [
+                {
+                    id: "image",
+                    type: "image",
+                    title: "图片",
+                    position: { x: 0, y: 0 },
+                    width: 320,
+                    height: 240,
+                    metadata: { content: "/api/reference-assets/permanent/image.webp", storageKey: "permanent/image.webp" },
+                },
+            ],
+        } as CanvasProject;
+        mocks.getCanvasProject.mockResolvedValue(current);
+        mocks.resolveMediaDisplayUrls.mockRejectedValue(new Error("display config unavailable"));
+
+        await expect(getCanvasProjectForUser("user-one", "canvas-one")).resolves.toEqual(current);
     });
 
     it("deletes the new conversation when project creation fails", async () => {

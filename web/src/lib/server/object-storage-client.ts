@@ -5,6 +5,7 @@ import { DeleteObjectsCommand, GetObjectCommand, HeadObjectCommand, ListObjectsV
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 import { assertObjectStorageConfigured, type ObjectStorageRuntimeConfig } from "@/lib/server/object-storage-config";
+import { publicObjectUrl } from "@/lib/object-storage-public-url";
 
 export type ObjectStorageListedObject = {
     key: string;
@@ -37,10 +38,11 @@ export async function testObjectStorageConnection(config: ObjectStorageRuntimeCo
         }
         try {
             const body = Buffer.from("vozeb-pro-storage-check");
-            await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: probeKey, Body: body, ContentLength: body.length, ContentType: "text/plain" }));
+            await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: probeKey, Body: body, ContentLength: body.length, ContentType: "text/plain", CacheControl: "no-store" }));
             uploaded = true;
+            if (config.imageDeliveryProvider === "cloudflare" && config.publicBaseUrl) await verifyPublicProbe(config, probeKey, body);
         } catch (error) {
-            throw objectStorageOperationError("对象写入检查失败", error);
+            throw objectStorageOperationError("对象写入或公开读取检查失败", error);
         }
         try {
             await deleteObjectBatch(client, config.bucket, [probeKey]);
@@ -54,19 +56,19 @@ export async function testObjectStorageConnection(config: ObjectStorageRuntimeCo
     }
 }
 
-export async function putObjectBytes(config: ObjectStorageRuntimeConfig, input: { key: string; bytes: Buffer; contentType: string; metadata?: Record<string, string> }) {
+export async function putObjectBytes(config: ObjectStorageRuntimeConfig, input: { key: string; bytes: Buffer; contentType: string; metadata?: Record<string, string>; cacheControl?: string }) {
     const client = createObjectStorageClient(config);
     try {
-        await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: input.key, Body: input.bytes, ContentLength: input.bytes.length, ContentType: input.contentType, Metadata: input.metadata }));
+        await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: input.key, Body: input.bytes, ContentLength: input.bytes.length, ContentType: input.contentType, Metadata: input.metadata, CacheControl: input.cacheControl }));
     } finally {
         client.destroy();
     }
 }
 
-export async function putObjectFile(config: ObjectStorageRuntimeConfig, input: { key: string; filePath: string; bytes: number; contentType: string; metadata?: Record<string, string> }) {
+export async function putObjectFile(config: ObjectStorageRuntimeConfig, input: { key: string; filePath: string; bytes: number; contentType: string; metadata?: Record<string, string>; cacheControl?: string }) {
     const client = createObjectStorageClient(config);
     try {
-        await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: input.key, Body: createReadStream(input.filePath), ContentLength: input.bytes, ContentType: input.contentType, Metadata: input.metadata }));
+        await client.send(new PutObjectCommand({ Bucket: config.bucket, Key: input.key, Body: createReadStream(input.filePath), ContentLength: input.bytes, ContentType: input.contentType, Metadata: input.metadata, CacheControl: input.cacheControl }));
     } finally {
         client.destroy();
     }
@@ -184,6 +186,20 @@ function sanitizeProviderMessage(value: string) {
         })
         .replace(/\s+/g, " ")
         .slice(0, 360);
+}
+
+async function verifyPublicProbe(config: ObjectStorageRuntimeConfig, probeKey: string, expected: Buffer) {
+    const response = await fetch(publicObjectUrl(config.publicBaseUrl, probeKey), {
+        cache: "no-store",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+        headers: { Accept: "text/plain" },
+    });
+    if (!response.ok) throw new Error(`媒体公开域名读取失败（HTTP ${response.status}）`);
+    const contentType = response.headers.get("content-type") || "";
+    if (!contentType.toLowerCase().startsWith("text/plain")) throw new Error("媒体公开域名返回了错误的 Content-Type");
+    const received = Buffer.from(await response.arrayBuffer());
+    if (!received.equals(expected)) throw new Error("媒体公开域名返回内容与刚上传的对象不一致");
 }
 
 function isMissingObjectError(error: unknown) {

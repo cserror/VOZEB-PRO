@@ -5,6 +5,7 @@ import type { GenerationAttempt } from "@/lib/server/generation-attempt";
 import type { GenerationLogSource } from "@/lib/server/generation-log-store";
 import { countActiveStoredGenerationTasks, createStoredGenerationTask, getStoredGenerationTask, mutateStoredGenerationTask, touchStoredGenerationTask, transitionStoredGenerationTask, type GenerationTaskContext } from "@/lib/server/generation-task-store";
 import { GENERATION_TASK_RETENTION_MS } from "@/lib/server/generation-task-retention";
+import { localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
 
 type ImageTaskKind = "generation" | "edit";
 type ImageTaskStatus = "pending" | "running" | "success" | "error" | "cancelled";
@@ -34,12 +35,15 @@ export type ImageTaskReference = {
     url?: string;
     remoteUrl?: string;
     serverUrl?: string;
+    storageKey?: string;
 };
 
 export type StoredImageTaskMediaResult = {
     dataUrl: string;
     remoteUrl?: string;
     serverUrl?: string;
+    storageKey?: string;
+    storageKind?: "local" | "object";
     width?: number;
     height?: number;
     bytes?: number;
@@ -82,7 +86,19 @@ export async function createImageTask(input: Omit<ImageTask, "id" | "status" | "
         createdAt: now,
         updatedAt: now,
     };
-    return createStoredGenerationTask("image", task, GENERATION_TASK_RETENTION_MS);
+    return createStoredGenerationTask("image", task, GENERATION_TASK_RETENTION_MS, {
+        referenceStorageKeys: imageTaskReferenceStorageKeys(task.references, task.mask),
+    });
+}
+
+function imageTaskReferenceStorageKeys(references: ImageTaskReference[], mask?: ImageTaskReference) {
+    const keys = [...references, ...(mask ? [mask] : [])].flatMap((reference) =>
+        [reference.storageKey, reference.serverUrl, reference.url, reference.remoteUrl, reference.dataUrl]
+            .filter((value): value is string => typeof value === "string" && Boolean(value.trim()))
+            .map(localMediaStorageKeyFromValue)
+            .filter(Boolean),
+    );
+    return Array.from(new Set(keys));
 }
 
 export async function getImageTask(id: string) {

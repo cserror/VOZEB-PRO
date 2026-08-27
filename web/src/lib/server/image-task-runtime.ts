@@ -9,7 +9,7 @@ import { registerGenerationTaskAssetsForUser } from "@/lib/server/creative-runti
 import { finishGenerationAttempt, startGenerationAttempt } from "@/lib/server/generation-attempt";
 import { generationModelId } from "@/lib/server/generation-channel";
 import { refundImageTask } from "@/lib/server/image-task-refund";
-import { deletePreparedImageTaskResults, persistedImageTaskResults, prepareImageTaskResults } from "@/lib/server/image-task-result-service";
+import { deletePreparedImageTaskResults, persistedImageTaskResults, prepareImageTaskResults, storedImageTaskResultsFromAssets } from "@/lib/server/image-task-result-service";
 import { generationVisualTaskNextPollAt, scheduleGenerationTask, wakeAgentGenerationTask } from "@/lib/server/generation-task-scheduler";
 import { GenerationSubmissionSafeFailure, generationSubmissionUncertainError } from "@/lib/server/generation-submission-error";
 import { getImageTask, transitionImageTask, updateImageTask, type ImageTask, type StoredImageTaskMediaResult } from "@/lib/server/image-task-store";
@@ -289,9 +289,7 @@ async function completeImageResult(task: ImageTask, safeResults: StoredImageTask
         return undefined;
     });
     const loggedAssets = logged?.assets?.length ? logged.assets : logged?.asset ? [logged.asset] : [];
-    const finalResults = loggedAssets.length
-        ? loggedAssets.map((asset) => ({ dataUrl: asset.serverUrl || asset.url, remoteUrl: asset.remoteUrl, serverUrl: asset.serverUrl, width: asset.width, height: asset.height, bytes: asset.bytes, mimeType: asset.mimeType }))
-        : safeResults;
+    const finalResults = loggedAssets.length ? await storedImageTaskResultsFromAssets(loggedAssets) : safeResults;
     const finalResult = finalResults[0];
     const attempts = finishGenerationAttempt(completed.attempts || [], completed.attemptNo || completed.attempts?.at(-1)?.attemptNo || 1, {
         status: "succeeded",
@@ -301,7 +299,7 @@ async function completeImageResult(task: ImageTask, safeResults: StoredImageTask
     const finalized = (await updateImageTask(task.id, { result: { ...finalResult, results: finalResults }, config: { ...completed.config, apiKey: "system" }, candidateConfigs: [], attempts, attemptNo: attempts.at(-1)?.attemptNo })) || completed;
     const assets = (finalized.result?.results?.length ? finalized.result.results : finalized.result ? [finalized.result] : []).flatMap((item) => {
         const url = item.serverUrl || item.remoteUrl || stableMediaUrl(item.dataUrl);
-        return url ? [{ type: "image" as const, url, mimeType: item.mimeType, width: item.width, height: item.height, bytes: item.bytes }] : [];
+        return url ? [{ type: "image" as const, url, storageKey: item.storageKey, storageKind: item.storageKind, mimeType: item.mimeType, width: item.width, height: item.height, bytes: item.bytes }] : [];
     });
     if (assets.length)
         await registerGenerationTaskAssetsForUser(finalized.userId, {

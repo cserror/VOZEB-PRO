@@ -61,11 +61,13 @@ export function AdminLocalMediaStorage() {
         setDeletingId(ids.length === 1 ? ids[0] : "bulk");
         try {
             const response = await fetch("/api/admin/generation-assets", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) });
-            const payload = (await response.json().catch(() => ({}))) as { data?: { deletedFiles?: number; blocked?: Array<{ referenceCount?: number }> }; msg?: string; error?: string };
+            const payload = (await response.json().catch(() => ({}))) as { data?: { deletedFiles?: number; blocked?: Array<{ referenceCount?: number }>; pending?: unknown[] }; msg?: string; error?: string };
             if (!response.ok) throw new Error(payload.msg || payload.error || "媒体文件删除失败");
             const blocked = payload.data?.blocked?.length || 0;
-            if (blocked) message.warning(`${blocked} 个文件仍被业务记录引用，已保留；其余文件已删除`);
-            else message.success(`已删除 ${payload.data?.deletedFiles || ids.length} 个媒体文件`);
+            const pending = payload.data?.pending?.length || 0;
+            if (pending) message.warning(`${pending} 个文件删除失败，已进入维护重试`);
+            else if (blocked) message.warning(`${blocked} 个文件仍被业务记录引用，已保留；其余文件已删除`);
+            else message.success(`已删除 ${payload.data?.deletedFiles ?? 0} 个媒体文件`);
             setSelectedIds((current) => current.filter((id) => !ids.includes(id)));
             await load();
         } catch (error) {
@@ -79,10 +81,12 @@ export function AdminLocalMediaStorage() {
         setCleaningExpired(true);
         try {
             const response = await fetch("/api/admin/generation-assets", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ expired: true }) });
-            const payload = (await response.json().catch(() => ({}))) as { data?: { deletedFiles?: number; blocked?: unknown[] }; msg?: string; error?: string };
+            const payload = (await response.json().catch(() => ({}))) as { data?: { deletedFiles?: number; blocked?: unknown[]; pending?: unknown[] }; msg?: string; error?: string };
             if (!response.ok) throw new Error(payload.msg || payload.error || "过期文件清理失败");
             const blocked = payload.data?.blocked?.length || 0;
-            if (blocked) message.warning(`已清理 ${payload.data?.deletedFiles || 0} 个过期临时文件，${blocked} 个仍被业务数据引用并已保留`);
+            const pending = payload.data?.pending?.length || 0;
+            if (pending) message.warning(`已清理 ${payload.data?.deletedFiles || 0} 个过期临时文件，${pending} 个删除失败并进入维护重试`);
+            else if (blocked) message.warning(`已清理 ${payload.data?.deletedFiles || 0} 个过期临时文件，${blocked} 个仍被业务数据引用并已保留`);
             else message.success(`已清理 ${payload.data?.deletedFiles || 0} 个过期临时文件`);
             setSelectedIds([]);
             await load();
@@ -145,6 +149,11 @@ export function AdminLocalMediaStorage() {
                 render: (_, asset) => (
                     <div className="space-y-1">
                         <Tag color={asset.storageClass === "permanent" ? "blue" : "gold"}>{asset.storageClass === "permanent" ? "长期" : "临时"}</Tag>
+                        {asset.deletionStatus === "pending" ? (
+                            <div title={asset.deletionLastError}>
+                                <Tag color="warning">待删除{asset.deletionAttempts ? ` · ${asset.deletionAttempts} 次失败` : ""}</Tag>
+                            </div>
+                        ) : null}
                         {asset.referenceCount ? <div className="text-xs text-zinc-500">引用 {asset.referenceCount}</div> : null}
                     </div>
                 ),
@@ -157,9 +166,17 @@ export function AdminLocalMediaStorage() {
                 align: "right",
                 render: (_, asset) => (
                     <div className="flex justify-end gap-1">
-                        <Button type="text" shape="circle" aria-label="预览媒体文件" icon={<Eye className="size-4" />} onClick={() => setPreviewAsset(asset)} />
-                        <Popconfirm title="删除这个媒体文件？" description="仍被会话、项目或素材库引用时会自动保留。" okText="删除" cancelText="取消" onConfirm={() => void remove([asset.id])}>
-                            <Button danger type="text" shape="circle" aria-label="删除媒体文件" icon={<Trash2 className="size-4" />} loading={deletingId === asset.id} />
+                        <Tooltip title={asset.deletionStatus === "pending" ? "待删除媒体已停止业务访问，可在外部存储列表检查仍存在的 R2 对象" : "预览"}>
+                            <Button type="text" shape="circle" aria-label="预览媒体文件" icon={<Eye className="size-4" />} disabled={asset.deletionStatus === "pending"} onClick={() => setPreviewAsset(asset)} />
+                        </Tooltip>
+                        <Popconfirm
+                            title={asset.deletionStatus === "pending" ? "立即重试删除这个媒体文件？" : "删除这个媒体文件？"}
+                            description="仍被会话、项目或素材库引用时会自动保留。"
+                            okText={asset.deletionStatus === "pending" ? "重试删除" : "删除"}
+                            cancelText="取消"
+                            onConfirm={() => void remove([asset.id])}
+                        >
+                            <Button danger type="text" shape="circle" aria-label={asset.deletionStatus === "pending" ? "重试删除媒体文件" : "删除媒体文件"} icon={<Trash2 className="size-4" />} loading={deletingId === asset.id} />
                         </Popconfirm>
                     </div>
                 ),

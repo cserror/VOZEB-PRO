@@ -5,7 +5,8 @@ import type { GenerationHistoryItem } from "../src/lib/generation-history-contra
 import { expectNoHorizontalOverflow, expectVisibleControlsWithinViewport } from "./responsive-helpers";
 
 const imageUrl = "/generation-smoke.webp";
-const optimizedImagePrompt = "生成一张自然写实动物摄影风格的图片：一只精神饱满、身体结构准确的成年公鸡全身站立在简洁的乡野地面上，姿态自然生动，头部微微抬起；鸡冠呈健康鲜明的深红色，羽毛纹理清晰细腻。采用平视视角与方形构图，背景适度虚化，使用柔和清晨自然光。画面中只出现一只主要的鸡，不要身体畸形、多余肢体、文字、标识或水印。";
+const optimizedImagePrompt =
+    "生成一张自然写实动物摄影风格的图片：一只精神饱满、身体结构准确的成年公鸡全身站立在简洁的乡野地面上，姿态自然生动，头部微微抬起；鸡冠呈健康鲜明的深红色，羽毛纹理清晰细腻。采用平视视角与方形构图，背景适度虚化，使用柔和清晨自然光。画面中只出现一只主要的鸡，不要身体畸形、多余肢体、文字、标识或水印。";
 
 test("generation history filters, previews, details, material actions, and current-page deletion", async ({ page }, testInfo) => {
     const items = generationItems();
@@ -40,10 +41,22 @@ test("generation history filters, previews, details, material actions, and curre
     await expectVisibleControlsWithinViewport(page);
 
     const viewportWidth = testInfo.project.use.viewport?.width || 1280;
+    const mainRect = await page.getByRole("main").evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right };
+    });
+    const contentRect = await page.getByTestId("generation-history-content").evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, width: rect.width };
+    });
+    expect(contentRect.width).toBeLessThanOrEqual(1280);
+    expect(Math.abs(contentRect.left - mainRect.left - (mainRect.right - contentRect.right))).toBeLessThanOrEqual(2);
     await expect(page.getByRole("combobox")).toHaveCount(viewportWidth >= 1024 ? 1 : 2);
     if (viewportWidth >= 1024) {
         const filters = page.getByPlaceholder("搜索原提示词或标题").locator("xpath=ancestor::section[1]");
-        const filterTops = await Promise.all([filters.locator(".ant-segmented:visible"), filters.locator(".ant-input-affix-wrapper:visible"), filters.locator(".ant-select:visible"), filters.locator(".ant-picker:visible")].map(async (control) => (await control.boundingBox())?.y));
+        const filterTops = await Promise.all(
+            [filters.locator(".ant-segmented:visible"), filters.locator(".ant-input-affix-wrapper:visible"), filters.locator(".ant-select:visible"), filters.locator(".ant-picker:visible")].map(async (control) => (await control.boundingBox())?.y),
+        );
         expect(filterTops.every((value): value is number => value !== undefined)).toBe(true);
         expect(Math.max(...(filterTops as number[])) - Math.min(...(filterTops as number[]))).toBeLessThanOrEqual(2);
     }
@@ -52,7 +65,7 @@ test("generation history filters, previews, details, material actions, and curre
     await expect(cards.first()).not.toContainText("已完成");
     await expect(cards.nth(2)).not.toContainText("失败");
     const lefts = await cards.evaluateAll((elements) => elements.map((element) => Math.round(element.getBoundingClientRect().left)));
-    const expectedColumns = viewportWidth < 768 ? 2 : viewportWidth < 1024 ? 3 : 4;
+    const expectedColumns = viewportWidth < 1024 ? 2 : viewportWidth < 1536 ? 3 : 4;
     expect(new Set(lefts).size).toBe(Math.min(expectedColumns, await cards.count()));
     await expect(cards.first()).not.toContainText("可公开优化提示词");
     await expect(cards.first()).toContainText("image-pro");
@@ -70,17 +83,29 @@ test("generation history filters, previews, details, material actions, and curre
     const preview = page.getByRole("dialog", { name: "商品主图" });
     await expect(preview).toBeVisible();
     await preview.locator(".ant-image-preview-close").click();
+    await expect
+        .poll(async () => {
+            if ((await preview.count()) === 0) return true;
+            return preview.evaluate((element) => {
+                const style = window.getComputedStyle(element);
+                return style.opacity === "0" || style.visibility === "hidden" || style.display === "none";
+            });
+        })
+        .toBe(true);
 
     await cards.first().getByRole("button", { name: "查看详情" }).click();
     const details = page.getByRole("dialog", { name: "生成详情" });
+    await expect(details.getByText("生图提示词", { exact: true })).toBeVisible();
     await expect(details.getByText(optimizedImagePrompt, { exact: true })).toBeVisible();
     await expect(details.getByText("2.5 积分", { exact: true })).toBeVisible();
     const sourceLabel = details.getByText("来源", { exact: true });
     await expect(sourceLabel).toBeVisible();
-    expect(await sourceLabel.evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.top >= 0 && rect.bottom <= window.innerHeight;
-    })).toBe(true);
+    expect(
+        await sourceLabel.evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return rect.top >= 0 && rect.bottom <= window.innerHeight;
+        }),
+    ).toBe(true);
     await page.keyboard.press("Escape");
     await expect(details).toBeHidden();
 
@@ -99,6 +124,43 @@ test("generation history filters, previews, details, material actions, and curre
 
     await page.getByPlaceholder("搜索原提示词或标题").fill("不存在");
     await expect(page.getByText("没有找到生成记录", { exact: true })).toBeVisible();
+});
+
+test("generation history defers media outside the viewport", async ({ page }) => {
+    const base = generationItems()[0];
+    const items = Array.from({ length: 30 }, (_, index): GenerationHistoryItem => {
+        const id = String(index + 1).padStart(2, "0");
+        return {
+            ...base,
+            id: `slot:defer-${id}:slot-${id}:0`,
+            logId: `defer-${id}`,
+            slotId: `slot-${id}`,
+            title: `延迟加载图片 ${id}`,
+            asset: {
+                ...base.asset!,
+                displayUrl: `/deferred-media/${id}.png`,
+                thumbnailUrl: `/deferred-media/${id}.png`,
+                storageKey: `permanent/deferred-${id}.png`,
+            },
+        };
+    });
+    const requestedMedia = new Set<string>();
+    const tinyPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+
+    await page.route(/\/api\/generation-history(?:\?.*)?$/, (route) => route.fulfill({ json: { code: 0, data: { items, total: items.length, page: 1, pageSize: 30 }, msg: "OK" } }));
+    await page.route(/\/deferred-media\/\d+\.png$/, (route) => {
+        requestedMedia.add(new URL(route.request().url()).pathname);
+        return route.fulfill({ status: 200, contentType: "image/png", body: tinyPng });
+    });
+
+    await page.goto("/generations");
+    await expect(page.getByRole("article")).toHaveCount(items.length);
+    await expect.poll(() => requestedMedia.size).toBeGreaterThan(0);
+    expect(requestedMedia.size).toBeLessThan(items.length);
+    const firstViewportRequestCount = requestedMedia.size;
+
+    await page.getByRole("main").evaluate((element) => element.scrollTo({ top: element.scrollHeight }));
+    await expect.poll(() => requestedMedia.size).toBeGreaterThan(firstViewportRequestCount);
 });
 
 test("prompt library and personal prompts share one route", async ({ page }) => {
@@ -142,7 +204,7 @@ function generationItems(): GenerationHistoryItem[] {
             pointsCost: 2.5,
             conversationId: "conversation-one",
             continueHref: "/create?conversationId=conversation-one",
-            asset: { type: "image", url: imageUrl, serverUrl: imageUrl, storageKey: "permanent/one.webp", mimeType: "image/webp", width: 1200, height: 800, bytes: 1024 },
+            asset: { type: "image", storageKey: "permanent/one.webp", displayUrl: imageUrl, thumbnailUrl: imageUrl, mimeType: "image/webp", width: 1200, height: 800, bytes: 1024 },
             durationMs: 2000,
             createdAt,
             completedAt: createdAt,
@@ -160,7 +222,7 @@ function generationItems(): GenerationHistoryItem[] {
             originalPrompt: "生成竖版海报",
             model: "image-pro",
             parameters: { size: "9:16" },
-            asset: { type: "image", url: imageUrl, serverUrl: imageUrl, storageKey: "permanent/two.webp", mimeType: "image/webp", width: 720, height: 1280, bytes: 1024 },
+            asset: { type: "image", storageKey: "permanent/two.webp", displayUrl: imageUrl, thumbnailUrl: imageUrl, mimeType: "image/webp", width: 720, height: 1280, bytes: 1024 },
             durationMs: 3000,
             createdAt,
             completedAt: createdAt,

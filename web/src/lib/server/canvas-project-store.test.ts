@@ -108,6 +108,7 @@ describe("canvas project file provider", () => {
         await createCanvasProject("user-one", initial);
         const firstSource = "permanent/canvas/first-frame.webp";
         const lastSource = "permanent/canvas/last-frame.webp";
+        mocks.files.set("local-media-assets.json", mediaRegistry([firstSource, lastSource]));
 
         await updateCanvasProjectMutationPatch("user-one", initial.id, {
             mutationId: "video-frame-mutation",
@@ -149,6 +150,22 @@ describe("canvas project file provider", () => {
                 },
             ],
         });
+    });
+
+    it("rejects a compact Canvas save that introduces media pending deletion", async () => {
+        const initial = project("pending-media", "待删除媒体");
+        const storageKey = "permanent/canvas/pending.webp";
+        await createCanvasProject("user-one", initial);
+        mocks.files.set("local-media-assets.json", mediaRegistry([storageKey], "pending"));
+
+        await expect(
+            updateCanvasProjectMutationPatch("user-one", initial.id, {
+                mutationId: "pending-media-mutation",
+                baseUpdatedAt: initial.updatedAt,
+                nodeUpserts: [{ id: "image-output", type: "image", metadata: { storageKey, content: `/api/reference-assets/${storageKey}` } } as CanvasProject["nodes"][number]],
+            }),
+        ).rejects.toThrow("媒体正在删除或已不可用");
+        await expect(getCanvasProject(initial.id, "user-one")).resolves.toMatchObject({ nodes: [] });
     });
 
     it("returns file-provider summaries without changing stored project details", async () => {
@@ -250,5 +267,24 @@ function project(id: string, title: string): CanvasProject {
         viewport: { x: 0, y: 0, k: 1 },
         createdAt: now,
         updatedAt: now,
+    };
+}
+
+function mediaRegistry(storageKeys: string[], deletionStatus: "active" | "pending" = "active") {
+    return {
+        version: 1,
+        assets: storageKeys.map((storageKey) => ({
+            storageKey,
+            scope: "reference",
+            storageClass: "permanent",
+            type: "image",
+            ownerUserId: "user-one",
+            source: "canvas",
+            mimeType: "image/webp",
+            bytes: 1024,
+            storageProvider: "local",
+            deletionStatus,
+            createdAt: "2026-08-27T00:00:00.000Z",
+        })),
     };
 }

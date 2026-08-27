@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { creativeConversationSourceForSurface, type CreativeAsset, type CreativeConversation, type CreativeConversationContext, type CreativeConversationSource, type CreativeMessage, type CreativeSurface } from "@/lib/creative-runtime-contract";
 import { ensurePostgresSchema, getDatabaseProvider, postgresQuery, withPostgresTransaction } from "@/lib/server/database";
 import { withGenerationTaskFileMutation } from "@/lib/server/generation-task-store";
+import { assertActiveMediaReferences, withActiveMediaReferenceWrite } from "@/lib/server/media-reference-write-guard";
 import {
     applyRuntimeMutation,
     boundedLimit,
@@ -457,27 +458,31 @@ export async function getLatestCreativeRunEventId(runId: string, type: string) {
 
 export async function registerCreativeAssets(inputs: NewAsset[]) {
     if (!inputs.length) return [];
+    const storageKeys = inputs.flatMap((input) => (input.storageKey?.trim() ? [input.storageKey.trim()] : []));
     if (getDatabaseProvider() === "postgres") {
         await ensurePostgresSchema();
         return withPostgresTransaction(async (client) => {
+            await assertActiveMediaReferences(storageKeys, { executor: client });
             const assets: CreativeAsset[] = [];
             for (const input of inputs) assets.push(await upsertPostgresAsset(client, input));
             return assets;
         });
     }
-    let registered: CreativeAsset[] = [];
-    await mutateRuntimeFile((db) => {
-        const now = Date.now();
-        const assets = [...db.assets];
-        registered = inputs.map((input) => {
-            const index = assets.findIndex((item) => item.sourceRunId === input.sourceRunId && item.sourceTaskId === input.sourceTaskId && item.ordinal === input.ordinal);
-            const existing = index >= 0 ? assets[index] : undefined;
-            const asset: CreativeAsset = { ...input, id: existing?.id || input.id || `asset-${nanoid()}`, status: input.status || "ready", metadata: input.metadata || {}, createdAt: existing?.createdAt || now, updatedAt: now };
-            if (index >= 0) assets[index] = asset;
-            else assets.push(asset);
-            return asset;
+    return withActiveMediaReferenceWrite(storageKeys, {}, async () => {
+        let registered: CreativeAsset[] = [];
+        await mutateRuntimeFile((db) => {
+            const now = Date.now();
+            const assets = [...db.assets];
+            registered = inputs.map((input) => {
+                const index = assets.findIndex((item) => item.sourceRunId === input.sourceRunId && item.sourceTaskId === input.sourceTaskId && item.ordinal === input.ordinal);
+                const existing = index >= 0 ? assets[index] : undefined;
+                const asset: CreativeAsset = { ...input, id: existing?.id || input.id || `asset-${nanoid()}`, status: input.status || "ready", metadata: input.metadata || {}, createdAt: existing?.createdAt || now, updatedAt: now };
+                if (index >= 0) assets[index] = asset;
+                else assets.push(asset);
+                return asset;
+            });
+            return { ...db, assets };
         });
-        return { ...db, assets };
+        return registered;
     });
-    return registered;
 }

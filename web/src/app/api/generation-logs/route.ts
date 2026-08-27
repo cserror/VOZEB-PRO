@@ -4,6 +4,7 @@ import { readJsonBody } from "@/lib/auth/request";
 import { getCurrentUser } from "@/lib/auth/session";
 import { deleteGenerationLogs, listGenerationLogs, listUserGenerationLogsForDelete } from "@/lib/server/generation-log-store";
 import { deleteGenerationLogResultsForUser, GenerationLogDraftValidationError, GenerationLogOwnershipError, recordGenerationLogDraft, renameGenerationLogForUser } from "@/lib/server/generation-log-task-service";
+import { hydrateGenerationLogMedia } from "@/lib/server/generation-log-view";
 import type { GenerationLogInput } from "@/lib/server/generation-log-types";
 
 export const runtime = "nodejs";
@@ -20,7 +21,8 @@ export async function GET(request: Request) {
     const source = url.searchParams.get("source") || undefined;
     const status = url.searchParams.get("status") || undefined;
     const keyword = url.searchParams.get("keyword") || undefined;
-    return NextResponse.json(await listGenerationLogs({ page, pageSize, kind, source, status, keyword, userId: currentUser.id }));
+    const result = await listGenerationLogs({ page, pageSize, kind, source, status, keyword, userId: currentUser.id });
+    return NextResponse.json({ ...result, items: await hydrateGenerationLogMedia(result.items) });
 }
 
 export async function POST(request: Request) {

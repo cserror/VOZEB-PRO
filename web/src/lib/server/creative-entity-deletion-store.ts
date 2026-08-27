@@ -146,7 +146,7 @@ async function deletePostgresEntities(client: QueryExecutor, userId: string, sco
         [userId, conversationIds],
     );
     const logAssetResult = await client.query<Record<string, unknown>>(
-        `SELECT url, remote_url, server_url FROM generation_log_assets
+        `SELECT storage_key FROM generation_log_assets
          WHERE generation_log_id = ANY($1::text[])
          FOR UPDATE`,
         [logIds],

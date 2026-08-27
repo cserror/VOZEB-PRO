@@ -33,6 +33,8 @@ import { buildOpenAiVideoFormData } from "./video-task-openai";
 import { normalizeVideoGenerationReferences, regularVideoReferences, videoFrameReferences, type VideoGenerationReference } from "@/lib/video-reference-contract";
 import { assertYumengVideoReferences, buildYumengVideoRequest } from "@/lib/yumeng-model-center";
 import { normalizeVideoProviderImageReferences } from "@/lib/server/video-reference-image";
+import { localMediaStorageKeyFromValue } from "@/lib/server/local-media-references";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 const CREATE_PATHS = ["/video/generations", "/videos/generations", "/videos/videos", "/videos"];
 type CreateVideoTaskBody = { config?: Record<string, unknown>; prompt?: string; references?: VideoGenerationReference[]; source?: string; context?: GenerationTaskContext };
@@ -155,20 +157,27 @@ export async function POST(request: Request) {
                     pollPath: geminiVideo ? geminiVideoCreatePath(channel.model) : channel.advancedConfig?.createPath || CREATE_PATHS[0],
                 };
                 if (!localTask) {
-                    localTask = await createVideoTask({
-                        userId: user.id,
-                        username: user.username,
-                        displayName: user.displayName,
-                        title: prompt.slice(0, 36) || "视频生成",
-                        config: channel,
-                        upstream: pendingUpstream,
-                        requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
-                        generationLogParameters,
-                        prompt,
-                        source: mediaTaskSource(body.source, body.context, "video-task"),
-                        attempts,
-                        ...(body.context || {}),
-                    });
+                    try {
+                        const taskInput = {
+                            userId: user.id,
+                            username: user.username,
+                            displayName: user.displayName,
+                            title: prompt.slice(0, 36) || "视频生成",
+                            config: channel,
+                            upstream: pendingUpstream,
+                            requestedDurationSeconds: parameters.videoSeconds === -1 ? undefined : parameters.videoSeconds,
+                            generationLogParameters,
+                            prompt,
+                            source: mediaTaskSource(body.source, body.context, "video-task"),
+                            attempts,
+                            ...(body.context || {}),
+                        };
+                        const referenceStorageKeys = videoReferenceStorageKeys(references);
+                        localTask = referenceStorageKeys.length ? await createVideoTask(taskInput, { referenceStorageKeys }) : await createVideoTask(taskInput);
+                    } catch (error) {
+                        if (error instanceof MediaReferenceWriteConflict) return NextResponse.json({ error: error.message }, { status: error.status });
+                        throw error;
+                    }
                     await linkStoredGenerationTask("video", localTask.id, body.context || {});
                 } else {
                     await updateVideoTask(localTask.id, {
@@ -240,6 +249,10 @@ export async function POST(request: Request) {
     if (response) return response;
     const retryAfter = await generationCapacityRetryAfterSeconds(user.id, "video", 30 * 60_000);
     return NextResponse.json({ error: "当前用户视频任务已达到并发上限" }, { status: 429, ...(retryAfter ? { headers: { "Retry-After": String(retryAfter) } } : {}) });
+}
+
+function videoReferenceStorageKeys(references: readonly VideoGenerationReference[]) {
+    return Array.from(new Set(references.map((reference) => localMediaStorageKeyFromValue(reference.url)).filter(Boolean)));
 }
 
 export async function signProviderReference(reference: VideoGenerationReference, user: { id: string; role: "user" | "admin" }, publicOrigin: string) {

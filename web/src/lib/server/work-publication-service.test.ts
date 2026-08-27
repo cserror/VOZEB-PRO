@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     getRegistration: vi.fn(),
     getRegistrations: vi.fn(),
     transaction: vi.fn(),
+    displayUrls: vi.fn(),
 }));
 
 vi.mock("@/lib/server/database", () => ({
@@ -19,9 +20,11 @@ vi.mock("@/lib/server/local-media-registry", () => ({
     getLocalMediaRegistration: mocks.getRegistration,
     getLocalMediaRegistrations: mocks.getRegistrations,
 }));
+vi.mock("@/lib/server/media-display-url", () => ({ resolveMediaDisplayUrls: mocks.displayUrls }));
 
 import {
     createWorkPublicationDraft,
+    authorizePublicWorkPublicationAsset,
     deleteWorkPublicationForAdmin,
     deleteWorkPublicationForUser,
     getPublicWorkPublication,
@@ -51,9 +54,11 @@ const ownedImage = {
 describe("work publication service", () => {
     let state: { work?: Record<string, unknown>; version?: Record<string, unknown>; assets: Array<Record<string, unknown>> };
     let workPublications: Record<string, ReturnType<typeof vi.fn>>;
+    let transactionExecutor: { query: ReturnType<typeof vi.fn> };
 
     beforeEach(() => {
         vi.clearAllMocks();
+        transactionExecutor = { query: vi.fn() };
         state = { assets: [] };
         workPublications = {
             listWorks: vi.fn(async (input) => ({ items: [], total: 0, page: input.page || 1, pageSize: input.pageSize || 20 })),
@@ -97,13 +102,15 @@ describe("work publication service", () => {
             hasTakenDownVersion: vi.fn(async () => false),
             deleteWorkCompletely: vi.fn(async () => "work-one"),
             getPublicWork: vi.fn(),
+            getPublicAsset: vi.fn(),
         };
         mocks.createRepositories.mockReturnValue({
             users: { getById: vi.fn(async () => ({ id: "user-one", username: "author", displayName: "作者", status: "active" })) },
             workPublications,
         });
-        mocks.transaction.mockImplementation(async (handler) => handler({ query: vi.fn() }));
+        mocks.transaction.mockImplementation(async (handler) => handler(transactionExecutor));
         mocks.getRegistrations.mockResolvedValue([ownedImage]);
+        mocks.displayUrls.mockResolvedValue(new Map());
     });
 
     it("forwards source type, search, and pagination to the repository", async () => {
@@ -123,6 +130,11 @@ describe("work publication service", () => {
         });
 
         expect(workPublications.createWork).toHaveBeenCalledWith(expect.objectContaining({ ownerUserId: "user-one", sourceType: "media", sourceId: "asset-one", lifecycleStatus: "active" }));
+        expect(mocks.getRegistrations).toHaveBeenCalledWith([ownedImage.storageKey], {
+            ownerUserId: "user-one",
+            executor: transactionExecutor,
+            forUpdate: true,
+        });
         expect(workPublications.createVersion).toHaveBeenCalledWith(expect.objectContaining({ versionNumber: 1, title: "公开作品", authorName: "作者", moderationStatus: "draft" }));
         expect(workPublications.replaceVersionAssets).toHaveBeenCalledWith(
             expect.any(String),
@@ -368,7 +380,7 @@ describe("work publication service", () => {
         expect(workPublications.deleteWorkCompletely).toHaveBeenCalledWith("work-one");
     });
 
-    it("returns a public contract without owner ids, source ids, or storage keys", async () => {
+    it("returns CDN display urls without exposing storage keys as structured fields", async () => {
         workPublications.getPublicWork.mockResolvedValue({
             id: "work-one",
             ownerUserId: "user-one",
@@ -390,12 +402,20 @@ describe("work publication service", () => {
             assets: [{ id: "asset-one", storageKey: ownedImage.storageKey, mediaType: "image", mimeType: "image/png", role: "content", sortOrder: 0, metadata: {}, createdAt: now }],
         });
 
+        mocks.displayUrls.mockResolvedValue(new Map([[ownedImage.storageKey, { displayUrl: "https://img.example.com/cdn-cgi/image/width=1280/work.png", thumbnailUrl: "https://img.example.com/cdn-cgi/image/width=640/work.png" }]]));
         const result = await getPublicWorkPublication("publicwork123");
         const serialized = JSON.stringify(result);
 
-        expect(result.assets[0]?.url).toBe("/api/public/works/publicwork123/media/asset-one");
+        expect(result.assets[0]?.url).toBe("https://img.example.com/cdn-cgi/image/width=1280/work.png");
         expect(serialized).not.toContain("user-one");
         expect(serialized).not.toContain("private-canvas-id");
-        expect(serialized).not.toContain(ownedImage.storageKey);
+        expect(serialized).not.toContain('"storageKey"');
+    });
+
+    it("does not authorize a pending deletion through a public work url", async () => {
+        workPublications.getPublicAsset.mockResolvedValueOnce({ id: "asset-one", storageKey: ownedImage.storageKey, mediaType: "image" });
+        mocks.getRegistration.mockResolvedValueOnce({ ...ownedImage, deletionStatus: "pending" });
+
+        await expect(authorizePublicWorkPublicationAsset("publicwork123", "asset-one")).rejects.toMatchObject({ status: 404, message: "媒体不存在" });
     });
 });

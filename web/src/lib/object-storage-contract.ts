@@ -1,11 +1,15 @@
 import type { ManagedMediaType } from "@/lib/local-media-storage-contract";
 
+export type ImageDeliveryProvider = "none" | "cloudflare";
+
 export type ObjectStorageSettings = {
     enabled: boolean;
     endpoint: string;
     region: string;
     bucket: string;
     prefix: string;
+    publicBaseUrl: string;
+    imageDeliveryProvider: ImageDeliveryProvider;
     forcePathStyle: boolean;
     hasAccessKeyId: boolean;
     hasSecretAccessKey: boolean;
@@ -18,6 +22,8 @@ export type ObjectStorageSettingsUpdate = {
     region: string;
     bucket: string;
     prefix: string;
+    publicBaseUrl?: string;
+    imageDeliveryProvider?: ImageDeliveryProvider;
     forcePathStyle: boolean;
     accessKeyId?: string;
     secretAccessKey?: string;
@@ -42,6 +48,10 @@ export type ExternalStorageFile = {
     ownerDisplayName?: string;
     source?: string;
     referenceCount: number;
+    deletionStatus?: "active" | "pending";
+    deletionRequestedAt?: string;
+    deletionAttempts?: number;
+    deletionLastError?: string;
     previewUrl: string;
     downloadUrl: string;
     variant: boolean;
@@ -65,6 +75,7 @@ export type ObjectStorageMigrationResult = {
 export type ObjectStorageDeleteResult = {
     deleted: number;
     blocked: Array<{ key: string; storageKey: string; referenceCount: number }>;
+    pending: Array<{ key: string; storageKey: string }>;
 };
 
 export type ObjectStoragePreviewCleanupResult = {

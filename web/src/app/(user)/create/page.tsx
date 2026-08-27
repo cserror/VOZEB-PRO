@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 
 import { CREATIVE_UPLOAD_ACCEPT, CREATIVE_UPLOAD_MAX_BYTES, isCreativeUploadMimeType } from "@/lib/creative-upload";
 import type { CreateOverviewAsset } from "@/lib/create-workbench-overview";
+import { mediaRouteUrl } from "@/lib/media-route-url";
 import type { CreativeAsset, CreativeGenerationMode, CreativeGenerationPreferences, CreativeMessage } from "@/lib/creative-runtime-contract";
 import { reconcileCreativeGenerationPreferences } from "@/lib/creative-model-capabilities";
 import { cn } from "@/lib/utils";
@@ -317,7 +318,7 @@ export default function CreatePage() {
     };
 
     const useRecentAsset = async (asset: CreateOverviewAsset) => {
-        await importReferenceMedia({ url: asset.url, fileStem: asset.id });
+        await importReferenceMedia({ url: mediaRouteUrl("generation", asset.storageKey), fileStem: asset.id });
     };
 
     const selectSkill = (skill: AgentSkillSummary) => {

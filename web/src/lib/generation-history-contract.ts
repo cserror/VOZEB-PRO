@@ -6,10 +6,9 @@ export type GenerationHistoryStatus = "pending" | "success" | "failed";
 
 export type GenerationHistoryAsset = {
     type: GenerationHistoryKind;
-    url: string;
-    remoteUrl?: string;
-    serverUrl?: string;
-    storageKey?: string;
+    storageKey: string;
+    displayUrl: string;
+    thumbnailUrl?: string;
     mimeType?: string;
     width?: number;
     height?: number;

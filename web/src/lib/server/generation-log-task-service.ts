@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createPostgresRepositories, ensurePostgresSchema, isPostgresDatabaseEnabled, withPostgresTransaction } from "@/lib/server/database";
 import { collectLocalMediaStorageKeys } from "@/lib/server/local-media-references";
 import { deleteUserLocalMediaAssets } from "@/lib/server/local-media-storage";
+import { assertActiveMediaReferences, withFileMediaLifecycleLock } from "@/lib/server/media-reference-write-guard";
 import {
     defaultSummary,
     mutateGenerationLogDb,
@@ -137,17 +138,26 @@ async function mutateOwnedGenerationLog(id: string, userId: string, mutate: (cur
             const current = record ? normalizeStoredLog(record as Partial<StoredGenerationLog>) : undefined;
             if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
             const next = await mutate(current);
+            if (next) await assertActiveMediaReferences(introducedMediaStorageKeys(current, next), { ownerUserId: userId, executor: client });
             return next ? normalizeStoredLog((await repository.upsert(next)) as Partial<StoredGenerationLog>) : null;
         });
     }
-    return mutateGenerationLogDb(async (db) => {
-        const current = db.logs.find((log) => log.id === id);
-        if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
-        const next = await mutate(current);
-        if (!next) return null;
-        db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
-        return next;
-    });
+    return withFileMediaLifecycleLock(() =>
+        mutateGenerationLogDb(async (db) => {
+            const current = db.logs.find((log) => log.id === id);
+            if (current && current.userId !== userId) throw new GenerationLogOwnershipError();
+            const next = await mutate(current);
+            if (!next) return null;
+            await assertActiveMediaReferences(introducedMediaStorageKeys(current, next), { ownerUserId: userId });
+            db.logs = [next, ...db.logs.filter((log) => log.id !== id)];
+            return next;
+        }),
+    );
+}
+
+function introducedMediaStorageKeys(current: StoredGenerationLog | undefined, next: StoredGenerationLog) {
+    const currentKeys = new Set(collectLocalMediaStorageKeys(current?.assets || []));
+    return collectLocalMediaStorageKeys(next.assets).filter((storageKey) => !currentKeys.has(storageKey));
 }
 
 function buildGenerationLogDraft(input: GenerationLogInput, id: string, existing?: StoredGenerationLog) {

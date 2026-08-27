@@ -5,6 +5,7 @@ import { Check, Film, Image as ImageIcon, LoaderCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { formatBytes } from "@/lib/image-utils";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import {
     createWorkPublication,
@@ -308,7 +309,7 @@ export function WorkPublicationEditor({
                                                     {candidate.mediaType === "image" ? (
                                                         <img src={imagePreviewUrl(candidate.previewUrl, 320)} alt={candidate.originalName} className="size-full object-cover" loading="lazy" />
                                                     ) : candidate.mediaType === "video" ? (
-                                                        <video src={candidate.previewUrl} className="size-full object-cover" preload="metadata" muted />
+                                                        <LazyMediaVideo src={candidate.previewUrl} className="size-full object-cover" preload="metadata" muted />
                                                     ) : null}
                                                     <Checkbox
                                                         className="!absolute !left-2 !top-2 !m-0 [&_.ant-checkbox-inner]:!size-5 [&_.ant-checkbox-inner]:!border-white/90 [&_.ant-checkbox-inner]:!bg-white/95 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-stone-950 [&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-stone-950 dark:[&_.ant-checkbox-inner]:!border-stone-700 dark:[&_.ant-checkbox-inner]:!bg-stone-900 dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!border-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:!bg-white dark:[&_.ant-checkbox-checked_.ant-checkbox-inner]:after:!border-stone-950"

@@ -34,6 +34,12 @@ describe("managed media input access", () => {
         await expect(requireManagedMediaInputOwner("/api/reference-assets/permanent/source.png", { id: "user-one", role: "user" }, "reference")).rejects.toThrow("参考素材不存在或无权访问");
     });
 
+    it("rejects media that has already entered the deletion lifecycle", async () => {
+        mocks.getRegistration.mockResolvedValue({ scope: "reference", storageClass: "permanent", ownerUserId: "user-one", deletionStatus: "pending" });
+
+        await expect(requireManagedMediaInputOwner("/api/reference-assets/permanent/source.png", { id: "user-one", role: "user" }, "reference")).rejects.toThrow("参考素材不存在或无权访问");
+    });
+
     it("lets an admin sign with the asset's real owner identity", async () => {
         await expect(requireManagedMediaInputOwner("/api/reference-assets/permanent/source.png", { id: "admin-one", role: "admin" }, "reference")).resolves.toBe("user-one");
     });

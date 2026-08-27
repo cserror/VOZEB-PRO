@@ -3,6 +3,7 @@
 import { ChevronDown, ChevronUp, FileVideo, ImageIcon, Play } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import type { CanvasTheme } from "@/lib/canvas-theme";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 
@@ -133,7 +134,7 @@ function MentionAssetPreview({ asset }: { asset: CanvasAgentMentionAsset }) {
     if (asset.type === "image") return <img src={imagePreviewUrl(asset.url, 192)} alt="" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" loading="lazy" />;
     return (
         <>
-            <video src={asset.url} muted playsInline preload="metadata" aria-hidden="true" className="pointer-events-none size-full object-cover" />
+            <LazyMediaVideo src={asset.url} muted playsInline preload="metadata" aria-hidden="true" className="pointer-events-none size-full object-cover" />
             <span className="pointer-events-none absolute bottom-1 left-1 grid size-5 place-items-center rounded-full bg-black/55 text-white">
                 <Play className="ml-0.5 size-2.5 fill-current" />
             </span>

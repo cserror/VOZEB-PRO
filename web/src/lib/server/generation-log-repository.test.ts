@@ -9,7 +9,7 @@ vi.mock("@/lib/server/safe-outbound-fetch", () => ({ fetchSafeOutbound: mocks.fe
 vi.mock("@/lib/server/security", () => ({ isSafeOutboundUrl: vi.fn(() => true) }));
 vi.mock("@/lib/server/object-storage-service", () => ({ deleteExternalMediaObject: vi.fn(), persistExternalMediaIfEnabled: mocks.persistExternalMediaIfEnabled }));
 
-import { normalizeStoredLog, readPostgresGenerationLogDb, writeRemoteAsset } from "./generation-log-repository";
+import { normalizeStoredAsset, normalizeStoredLog, readPostgresGenerationLogDb, writeRemoteAsset } from "./generation-log-repository";
 
 const PNG_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+4q2JAAAAAElFTkSuQmCC", "base64");
 
@@ -30,7 +30,7 @@ function storedLogWithAssets(count: number) {
         count,
         successCount: count,
         failCount: 0,
-        assets: Array.from({ length: count }, (_, index) => ({ type: "image" as const, url: `/api/generation-log-assets/result-${index}.png` })),
+        assets: Array.from({ length: count }, (_, index) => ({ type: "image" as const, storageKey: `permanent/result-${index}.png` })),
         createdAt: "2026-07-28T00:00:00.000Z",
         updatedAt: "2026-07-28T00:00:00.000Z",
     });
@@ -48,7 +48,16 @@ describe("generation log asset normalization", () => {
         const asset = await writeRemoteAsset("https://cdn.example.com/result", "image", { ownerUserId: "user-1", source: "canvas" });
 
         expect(asset).toMatchObject({ mimeType: "image/png", type: "image" });
+        expect(asset?.storageKey).toMatch(/^permanent\/\d{4}\/\d{2}\/\d{2}\/images\/.+\.png$/);
         expect(mocks.fetchSafeOutbound).toHaveBeenCalledWith("https://cdn.example.com/result", expect.objectContaining({ redirect: "follow" }));
+    });
+
+    it("requires a storage key and does not retain legacy media urls", () => {
+        expect(normalizeStoredAsset({ type: "image", url: "/api/generation-log-assets/permanent/legacy.png", serverUrl: "/api/generation-log-assets/permanent/legacy.png" })).toBeNull();
+        expect(normalizeStoredAsset({ type: "image", storageKey: "permanent/current.png", url: "https://provider.example/current.png", remoteUrl: "https://provider.example/current.png" })).toEqual({
+            type: "image",
+            storageKey: "permanent/current.png",
+        });
     });
 
     it("does not persist non-image bytes hidden behind an image task URL", async () => {

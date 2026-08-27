@@ -122,7 +122,14 @@ export function CanvasAssistantPanel({ nodes, selectedNodeIds, snapshot, session
     const readyReferenceIds = useMemo(() => allSelectedReferences.map((item) => item.id), [allSelectedReferences]);
     const { uploads, addFiles, retryUpload, removeUpload } = useCanvasAgentAttachments(onPasteImage, readyReferenceIds);
     const composerAttachments = [
-        ...selectedMediaReferences.map((item) => ({ id: item.id, name: item.title, url: item.dataUrl!, type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const), label: referenceAliases.get(item.id), status: "ready" as const })),
+        ...selectedMediaReferences.map((item) => ({
+            id: item.id,
+            name: item.title,
+            url: item.thumbnailUrl || item.displayUrl || item.dataUrl!,
+            type: item.type === CanvasNodeType.Video ? ("video" as const) : ("image" as const),
+            label: referenceAliases.get(item.id),
+            status: "ready" as const,
+        })),
         ...uploads.filter((item) => !item.nodeId || !readyReferenceIds.includes(item.nodeId)),
     ];
     const messageScrollKey = messages.map((item) => `${item.id}:${item.text.length}`).join("|") + `:${isRunning}:${runStage.key}`;

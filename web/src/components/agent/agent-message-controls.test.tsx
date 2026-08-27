@@ -55,6 +55,24 @@ describe("agent message controls", () => {
         expect(video).not.toContain("object-cover");
     });
 
+    it("defers offscreen media sources without changing ordinary previews", () => {
+        const image = renderToStaticMarkup(
+            <App>
+                <AgentMediaPreview type="image" url="/generated/image.png" title="延迟图片" defer />
+            </App>,
+        );
+        const video = renderToStaticMarkup(
+            <App>
+                <AgentMediaPreview type="video" url="/generated/video.mp4" title="延迟视频" defer />
+            </App>,
+        );
+
+        expect(image).toContain('data-media-deferred="true"');
+        expect(image).not.toContain('src="/generated/image.png"');
+        expect(video).toContain('preload="none"');
+        expect(video).not.toContain('src="/generated/video.mp4"');
+    });
+
     it("builds safe download names and hides upstream JSON errors", () => {
         const imageName = agentMediaDownloadName("image", "小狗/竖版", "/generated/image.webp?token=1");
         const videoName = agentMediaDownloadName("video", "短片.mp4", "/generated/video.mp4");

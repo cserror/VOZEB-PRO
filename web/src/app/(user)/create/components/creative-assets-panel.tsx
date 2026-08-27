@@ -5,6 +5,8 @@ import { AtSign, ChevronDown, CornerDownLeft, FileVideo, ImageIcon, LibraryBig, 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { LazyMediaImage } from "@/components/media/lazy-media-image";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
+import { creativeAssetDisplayUrl, creativeAssetThumbnailUrl } from "@/lib/creative-asset-url";
 import type { CreativeAsset } from "@/lib/creative-runtime-contract";
 import { imagePreviewUrl } from "@/lib/media-image-url";
 import { listMyPrompts } from "@/services/api/my-prompts";
@@ -211,7 +213,7 @@ export function ConversationAssets({
                                     type="button"
                                     className="block size-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#6268d8]"
                                     onClick={() => {
-                                        const url = asset.serverUrl || asset.remoteUrl;
+                                        const url = creativeAssetDisplayUrl(asset);
                                         if (!url || (asset.type !== "image" && asset.type !== "video")) return;
                                         const posterUrl = typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : undefined;
                                         onPreview({ type: asset.type, url, title: asset.title, posterUrl });
@@ -413,11 +415,11 @@ function PanelEmpty({ icon, text, action }: { icon: React.ReactNode; text: strin
 }
 
 function AssetPreview({ asset }: { asset: CreativeAsset }) {
-    const url = asset.serverUrl || asset.remoteUrl;
-    if (asset.type === "image" && url) return <img src={imagePreviewUrl(url, 320)} alt="" className="size-full object-cover" loading="lazy" />;
+    const url = creativeAssetDisplayUrl(asset);
+    if (asset.type === "image" && url) return <img src={imagePreviewUrl(creativeAssetThumbnailUrl(asset), 320)} alt="" className="size-full object-cover" loading="lazy" />;
     const coverUrl = typeof asset.metadata.coverUrl === "string" ? asset.metadata.coverUrl : "";
     if (asset.type === "video" && coverUrl) return <img src={imagePreviewUrl(coverUrl, 320)} alt="" className="size-full object-cover" loading="lazy" />;
-    if (asset.type === "video" && url) return <video src={url} aria-label={asset.title} className="size-full bg-black object-cover" muted playsInline preload="metadata" />;
+    if (asset.type === "video" && url) return <LazyMediaVideo src={url} aria-label={asset.title} className="size-full bg-black object-cover" muted playsInline preload="metadata" />;
     const Icon = asset.type === "video" ? FileVideo : ImageIcon;
     return (
         <span className="grid size-full place-items-center text-[#7b8490] dark:text-[#aab3bf]">

@@ -33,7 +33,8 @@ vi.mock("@/lib/server/creative-runtime-store", () => ({ getCreativeConversations
 vi.mock("@/lib/server/library-asset-store", () => ({ listLibraryGenerationResultIds: mocks.listAddedResultIds, createLibraryAssetIfAbsent: mocks.createLibraryAssetIfAbsent }));
 
 import { generationHistoryResultId } from "@/lib/generation-history-contract";
-import { addGenerationHistoryResultToLibrary, deleteGenerationHistoryResultsForUser, listGenerationHistoryForUser } from "./generation-history-service";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
+import { addGenerationHistoryResultToLibrary, deleteGenerationHistoryResultsForUser, GenerationHistoryServiceError, listGenerationHistoryForUser } from "./generation-history-service";
 
 describe("generation history service", () => {
     beforeEach(() => {
@@ -220,9 +221,7 @@ describe("generation history service", () => {
                 },
             ]);
         mocks.getConversations.mockResolvedValue([{ id: "conversation-one", userId: "user-one", surface: "chat", source: "agent" }]);
-        mocks.getUserMessages.mockResolvedValue([
-            { id: "message-user", conversationId: "conversation-one", runId: "run-one", role: "user", status: "completed", content: "生成一只自然写实的公鸡", sequence: 1, metadata: {}, createdAt: 1, updatedAt: 1 },
-        ]);
+        mocks.getUserMessages.mockResolvedValue([{ id: "message-user", conversationId: "conversation-one", runId: "run-one", role: "user", status: "completed", content: "生成一只自然写实的公鸡", sequence: 1, metadata: {}, createdAt: 1, updatedAt: 1 }]);
 
         const result = await listGenerationHistoryForUser("user-one", { page: 1, pageSize: 24 });
 
@@ -278,6 +277,17 @@ describe("generation history service", () => {
             }),
         );
     });
+
+    it("returns a conflict when deletion wins the race with adding a result to the library", async () => {
+        const log = generationLog(["slot-one"]);
+        mocks.getGenerationLogById.mockResolvedValue(log);
+        mocks.createLibraryAssetIfAbsent.mockRejectedValue(new MediaReferenceWriteConflict("媒体正在删除或已不可用"));
+
+        const error = await addGenerationHistoryResultToLibrary("user-one", generationHistoryResultId({ logId: log.id, slotId: "slot-one", assetIndex: 0 })).catch((reason: unknown) => reason);
+
+        expect(error).toBeInstanceOf(GenerationHistoryServiceError);
+        expect(error).toMatchObject({ message: "媒体正在删除或已不可用", status: 409 });
+    });
 });
 
 function generationLog(slotIds: string[]) {
@@ -298,7 +308,7 @@ function generationLog(slotIds: string[]) {
         count: slotIds.length,
         successCount: slotIds.length,
         failCount: 0,
-        assets: slotIds.map((id) => ({ type: "image" as const, url: `/api/generation-log-assets/permanent/${id}.webp` })),
+        assets: slotIds.map((id) => ({ type: "image" as const, storageKey: `permanent/${id}.webp` })),
         requestSnapshot: {
             version: 1 as const,
             userPrompt: "用户原文",

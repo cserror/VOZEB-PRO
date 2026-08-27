@@ -4,7 +4,6 @@ import { Button, Checkbox, Tooltip } from "antd";
 import { Check, Copy, Download, FolderPlus, Image as ImageIcon, Info, Pencil, Trash2, Video } from "lucide-react";
 
 import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
-import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import type { GenerationHistoryItem } from "@/lib/generation-history-contract";
 import { cn } from "@/lib/utils";
 
@@ -32,18 +31,16 @@ export function GenerationHistoryCard({
     onDelete: () => void;
 }) {
     const prompt = item.optimizedPrompt || item.originalPrompt;
-    const assetUrl = item.asset?.serverUrl || item.asset?.url || "";
+    const assetUrl = item.asset?.displayUrl || "";
     const aspectRatio = item.asset?.width && item.asset?.height ? `${item.asset.width} / ${item.asset.height}` : item.kind === "video" ? "16 / 9" : "4 / 3";
     const busy = Boolean(busyAction);
     return (
         <article className={cn("group min-w-0 overflow-hidden rounded-lg border bg-card text-card-foreground transition", selected ? "border-primary ring-1 ring-primary/25" : "border-border hover:border-foreground/20 hover:shadow-sm")}>
             <div className="relative min-h-28 overflow-hidden bg-muted" style={{ aspectRatio }}>
                 {assetUrl ? (
-                    <AgentMediaPreview type={item.kind} url={browserReadableMediaUrl(assetUrl)} title={item.title} className="size-full" />
+                    <AgentMediaPreview type={item.kind} url={assetUrl} thumbnailUrl={item.asset?.thumbnailUrl} previewUrl={assetUrl} title={item.title} className="size-full" defer />
                 ) : (
-                    <div className="grid size-full min-h-32 place-items-center text-muted-foreground">
-                        {item.kind === "video" ? <Video className="size-7" /> : <ImageIcon className="size-7" />}
-                    </div>
+                    <div className="grid size-full min-h-32 place-items-center text-muted-foreground">{item.kind === "video" ? <Video className="size-7" /> : <ImageIcon className="size-7" />}</div>
                 )}
                 <div className="absolute left-2 top-2 z-10" onClick={(event) => event.stopPropagation()}>
                     <Checkbox checked={selected} aria-label={`选择${item.title}`} onChange={(event) => onSelect(event.target.checked)} />
@@ -55,7 +52,9 @@ export function GenerationHistoryCard({
                     {item.title || (item.kind === "video" ? "生成视频" : "生成图片")}
                 </h2>
                 <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
-                    <span className="min-w-0 truncate" title={item.model || "未记录模型"}>{item.model || "未记录模型"}</span>
+                    <span className="min-w-0 truncate" title={item.model || "未记录模型"}>
+                        {item.model || "未记录模型"}
+                    </span>
                     <time className="shrink-0">{formatTime(item.createdAt)}</time>
                 </div>
                 <div role="toolbar" aria-label="结果操作" className="mt-2 grid grid-cols-3 gap-0.5 border-t border-border pt-2 sm:grid-cols-6">
@@ -84,7 +83,17 @@ export function GenerationHistoryCard({
                         />
                     </Tooltip>
                     <Tooltip title={item.status === "pending" ? "生成中暂不能删除" : "删除"}>
-                        <Button type="text" size="small" danger className="!h-8 !w-full !p-0" icon={<Trash2 className="size-3.5" />} loading={busyAction === "delete"} disabled={busy || item.status === "pending"} aria-label="删除生成记录" onClick={onDelete} />
+                        <Button
+                            type="text"
+                            size="small"
+                            danger
+                            className="!h-8 !w-full !p-0"
+                            icon={<Trash2 className="size-3.5" />}
+                            loading={busyAction === "delete"}
+                            disabled={busy || item.status === "pending"}
+                            aria-label="删除生成记录"
+                            onClick={onDelete}
+                        />
                     </Tooltip>
                 </div>
             </div>

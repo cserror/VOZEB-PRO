@@ -64,6 +64,7 @@ vi.mock("@/lib/server/video-task-store", () => ({
 
 import { POST } from "./route";
 import { resetChannelRuntimeHealth } from "@/lib/server/channel-runtime-health";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 const channels = [
     { id: "one", name: "主渠道", baseUrl: "https://one.example.com/v1", apiKey: "one-secret", apiFormat: "openai", models: ["video-one"], enabled: true, advancedConfig: { protocol: "openai" } },
@@ -862,6 +863,19 @@ describe("video generation candidate failover", () => {
             }),
         );
         vi.unstubAllEnvs();
+    });
+
+    it("returns a conflict when an owned reference starts deleting before task creation", async () => {
+        vi.stubEnv("VOZEB_PRO_REFERENCE_ASSET_SIGNING_KEY", "test-signing-key");
+        mocks.getAuthSettings.mockResolvedValue(yumengSettings());
+        mocks.createVideoTask.mockRejectedValueOnce(new MediaReferenceWriteConflict("媒体正在删除或已不可用"));
+        const source = "/api/generation-log-assets/permanent/2026/08/20/images/storyboard.png";
+
+        const response = await POST(request({ model: "sd_2.0_fast_special", videoSeconds: "5", size: "16:9", vquality: "720" }, [{ type: "image", url: source }], undefined, "https://drama.example/api/video-generation-tasks"));
+
+        expect(response.status).toBe(409);
+        await expect(response.json()).resolves.toEqual({ error: "媒体正在删除或已不可用" });
+        expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
 
     it("rejects local reference URLs before creating a public-URL provider task", async () => {

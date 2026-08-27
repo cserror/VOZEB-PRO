@@ -3,9 +3,9 @@
 import { Button, Checkbox, Popconfirm, Tag } from "antd";
 import { Eye, Film, Image as ImageIcon, Trash2 } from "lucide-react";
 
-import { browserReadableMediaUrl } from "@/lib/browser-media-url";
 import { AdminAccountId } from "@/components/admin/admin-user-identity";
-import { imagePreviewUrl } from "@/lib/media-image-url";
+import { AgentMediaPreview } from "@/components/agent/agent-media-preview";
+import { LazyMediaVideo } from "@/components/media/lazy-media-video";
 import type { StoredGenerationLog } from "@/lib/server/generation-log-store";
 
 export function GenerationLogAssetPreview({ log }: { log: StoredGenerationLog }) {
@@ -19,9 +19,20 @@ export function GenerationLogAssetPreview({ log }: { log: StoredGenerationLog })
         );
     }
     if (asset.type === "video") {
-        return <video className="size-12 rounded-lg border border-stone-200 bg-stone-100 object-cover dark:border-stone-800 dark:bg-stone-900" src={assetUrl} muted playsInline preload="metadata" />;
+        return <LazyMediaVideo className="size-12 rounded-lg border border-stone-200 bg-stone-100 object-cover dark:border-stone-800 dark:bg-stone-900" src={assetUrl} muted playsInline preload="metadata" />;
     }
-    return <img className="size-12 rounded-lg border border-stone-200 bg-stone-100 object-cover dark:border-stone-800 dark:bg-stone-900" src={imagePreviewUrl(assetUrl, 256)} alt="" loading="lazy" referrerPolicy="no-referrer" />;
+    return (
+        <AgentMediaPreview
+            type="image"
+            url={assetUrl}
+            thumbnailUrl={asset.thumbnailUrl}
+            previewUrl={assetUrl}
+            title={log.title || "生成图片"}
+            className="size-12 rounded-lg border border-stone-200 bg-stone-100 dark:border-stone-800 dark:bg-stone-900"
+            previewOverlay="icon"
+            defer
+        />
+    );
 }
 
 export function GenerationLogMobileCard({ log, selected, onSelectedChange, onView, onDelete }: { log: StoredGenerationLog; selected: boolean; onSelectedChange: (checked: boolean) => void; onView: () => void; onDelete: () => void }) {
@@ -116,7 +127,7 @@ function GenerationLogResultSection({ log }: { log: StoredGenerationLog }) {
                 {assets.map((asset, index) => {
                     const assetUrl = generationLogAssetAccessUrl(asset);
                     return (
-                        <div key={`${asset.url}-${index}`} className="grid min-w-0 items-start gap-3 rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/60 sm:grid-cols-[156px_minmax(0,1fr)]">
+                        <div key={`${asset.storageKey}-${index}`} className="grid min-w-0 items-start gap-3 rounded-lg border border-stone-200 bg-white p-3 dark:border-stone-800 dark:bg-stone-950/60 sm:grid-cols-[156px_minmax(0,1fr)]">
                             <div className="min-w-0">
                                 <div className="mb-2 flex items-center justify-between gap-2 text-xs font-medium text-stone-500 dark:text-stone-400">
                                     <span>{asset.type === "video" ? `视频 ${index + 1}` : `图片 ${index + 1}`}</span>
@@ -124,9 +135,17 @@ function GenerationLogResultSection({ log }: { log: StoredGenerationLog }) {
                                 </div>
                                 <div className="flex h-32 items-center justify-center overflow-hidden rounded-md bg-stone-100 p-2 dark:bg-stone-900 sm:h-36">
                                     {asset.type === "video" ? (
-                                        <video className="h-full w-full rounded bg-black object-contain" src={assetUrl} controls playsInline preload="metadata" />
+                                        <LazyMediaVideo className="h-full w-full rounded bg-black object-contain" src={assetUrl} controls playsInline preload="metadata" />
                                     ) : (
-                                        <img className="h-full w-full object-contain" src={imagePreviewUrl(assetUrl, 960)} alt="" referrerPolicy="no-referrer" loading="lazy" />
+                                        <AgentMediaPreview
+                                            type="image"
+                                            url={assetUrl}
+                                            thumbnailUrl={asset.thumbnailUrl}
+                                            previewUrl={assetUrl}
+                                            title={`${log.title || "生成图片"} ${index + 1}`}
+                                            className="h-full w-full"
+                                            fit="contain"
+                                        />
                                     )}
                                 </div>
                             </div>
@@ -143,9 +162,7 @@ function GenerationLogResultSection({ log }: { log: StoredGenerationLog }) {
 }
 
 function generationLogAssetAccessUrl(asset: StoredGenerationLog["assets"][number]) {
-    const directUrl = asset.url && !asset.url.startsWith("/api/generation-log-assets/") && asset.url !== asset.serverUrl ? asset.url : "";
-    const serverUrl = asset.serverUrl || (asset.url?.startsWith("/api/generation-log-assets/") ? asset.url : "");
-    return browserReadableMediaUrl(asset.remoteUrl || directUrl || serverUrl || asset.serverUrl || (asset.url?.startsWith("/api/generation-log-assets/") ? asset.url : ""));
+    return asset.displayUrl || "";
 }
 
 function formatAssetBytes(bytes: number) {

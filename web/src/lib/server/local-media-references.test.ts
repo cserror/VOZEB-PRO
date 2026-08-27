@@ -39,6 +39,8 @@ describe("countLocalMediaReferences", () => {
         expect(mocks.postgresQuery).toHaveBeenCalledTimes(1);
         expect(mocks.postgresQuery).toHaveBeenCalledWith(expect.stringContaining("unnest($1::text[])"), [["permanent/one.png", "permanent/two.png"]]);
         const sql = String(mocks.postgresQuery.mock.calls[0]?.[0]);
+        expect(sql).toContain("JOIN generation_log_assets a ON a.storage_key = r.storage_key");
+        expect(sql).not.toMatch(/JOIN generation_log_assets a ON[^;]*a\.(?:server_url|url)/s);
         for (const table of [
             "creative_assets",
             "creative_messages",
@@ -53,6 +55,17 @@ describe("countLocalMediaReferences", () => {
             "published_work_assets",
         ])
             expect(sql).toContain(table);
+    });
+
+    it("uses the caller transaction when reference checks protect a deletion claim", async () => {
+        mocks.getDatabaseProvider.mockReturnValue("postgres");
+        const query = vi.fn().mockResolvedValue({ rows: [{ storage_key: "permanent/one.png", total: 0 }] });
+
+        await countLocalMediaReferences(["permanent/one.png"], { executor: { query } });
+
+        expect(mocks.ensurePostgresSchema).not.toHaveBeenCalled();
+        expect(mocks.postgresQuery).not.toHaveBeenCalled();
+        expect(query).toHaveBeenCalledWith(expect.stringContaining("unnest($1::text[])"), [["permanent/one.png"]]);
     });
 
     it("keeps media referenced by another file-provider generation task", async () => {

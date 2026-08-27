@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
     referenceDataUrl: vi.fn(),
     mediaHeaders: vi.fn(() => ({ "x-media-auth": "signed" })),
     normalizeAssets: vi.fn(),
+    getMediaRegistrations: vi.fn(),
     deleteAsset: vi.fn(),
     getSettings: vi.fn(),
     register: vi.fn(),
@@ -45,7 +46,12 @@ vi.mock("@/app/api/image-tasks/image-task-runner", () => ({ stableMediaUrl: vi.f
 vi.mock("@/lib/auth/store", () => ({ getAuthSettings: mocks.getSettings, refundUserPoints: mocks.refund }));
 vi.mock("@/lib/server/creative-runtime-service", () => ({ registerGenerationTaskAssetsForUser: mocks.register }));
 vi.mock("@/lib/server/generation-task-scheduler", () => ({ generationVisualTaskNextPollAt: mocks.nextVisualPoll, scheduleGenerationTask: mocks.schedule, wakeAgentGenerationTask: mocks.wakeAgent }));
-vi.mock("@/lib/server/generation-log-repository", () => ({ normalizeAssets: mocks.normalizeAssets, deleteLocalAsset: mocks.deleteAsset }));
+vi.mock("@/lib/server/generation-log-repository", () => ({
+    normalizeAssets: mocks.normalizeAssets,
+    deleteLocalAsset: mocks.deleteAsset,
+    stableAssetUrl: vi.fn((asset: { storageKey?: string }) => (asset.storageKey ? `/api/generation-log-assets/${asset.storageKey}` : "")),
+}));
+vi.mock("@/lib/server/local-media-registry", () => ({ getLocalMediaRegistrations: mocks.getMediaRegistrations }));
 vi.mock("@/lib/server/image-task-store", () => ({
     getImageTask: mocks.getTask,
     updateImageTask: mocks.updateTask,
@@ -81,9 +87,9 @@ describe("image task runtime submission safety", () => {
         mocks.normalizeAssets.mockImplementation(async (assets: Array<{ url: string; remoteUrl?: string }>) => {
             const source = assets[0];
             const name = source.url.includes("first") ? "first" : source.url.includes("second") ? "second" : `asset-${mocks.normalizeAssets.mock.calls.length}`;
-            const serverUrl = `/api/generation-log-assets/${name}.png`;
-            return [{ type: "image", url: serverUrl, serverUrl, remoteUrl: source.remoteUrl, mimeType: "image/png", width: 4, height: 4, bytes: 128 }];
+            return [{ type: "image", storageKey: `${name}.png`, mimeType: "image/png", width: 4, height: 4, bytes: 128 }];
         });
+        mocks.getMediaRegistrations.mockImplementation(async (storageKeys: string[]) => storageKeys.map((storageKey) => ({ storageKey, storageProvider: "object" })));
         mocks.deleteAsset.mockResolvedValue(undefined);
         mocks.register.mockResolvedValue(undefined);
         mocks.wakeAgent.mockResolvedValue(null);
@@ -256,7 +262,19 @@ describe("image task runtime submission safety", () => {
         expect(step).toMatchObject({ state: "result_ready", resultUrl: expect.stringContaining("/api/generation-log-assets/") });
         expect(JSON.stringify(state.result)).not.toContain("data:image");
         expect(state.result?.dataUrl).toMatch(/^\/api\/generation-log-assets\//);
+        expect(state.result).toMatchObject({ storageKey: "asset-1.png", storageKind: "object" });
         expect(mocks.schedule).toHaveBeenLastCalledWith("image", "image-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: state.result?.dataUrl }, lastUpstreamStatus: "completed" }));
+    });
+
+    it("keeps a locally stored image marked as local even though it has a storage key", async () => {
+        state.config = { ...state.config, advancedConfig: { ...emptyAdvancedConfig(), protocol: "openai" } };
+        state.candidateConfigs = [];
+        mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: "data:image/png;base64,c2FmZQ==", pointsCost: 1, pointsRecordId: "record-one" });
+        mocks.getMediaRegistrations.mockResolvedValueOnce([{ storageKey: "asset-1.png", storageProvider: "local" }]);
+
+        await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
+
+        expect(state.result).toMatchObject({ storageKey: "asset-1.png", storageKind: "local" });
     });
 
     it("resumes a prepared result without creating the upstream task again", async () => {
@@ -277,8 +295,7 @@ describe("image task runtime submission safety", () => {
         mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: "data:image/png;base64,c2FmZQ==", pointsCost: 1, pointsRecordId: "record-one" });
         mocks.normalizeAssets.mockImplementationOnce(async () => {
             state = { ...state, status: "cancelled" };
-            const serverUrl = "/api/generation-log-assets/cancelled.png";
-            return [{ type: "image", url: serverUrl, serverUrl }];
+            return [{ type: "image", storageKey: "cancelled.png" }];
         });
 
         await expect(createImageTaskUpstreamStep(state, "http://internal", "https://public.example")).resolves.toMatchObject({ state: "failed", status: "cancelled" });
@@ -295,7 +312,7 @@ describe("image task runtime submission safety", () => {
         mocks.resolveMedia.mockReturnValueOnce({ remoteUrl, proxyUrl });
         mocks.runOpenAi.mockResolvedValueOnce({ dataUrl: proxyUrl, remoteUrl });
         mocks.inlineResult.mockResolvedValueOnce({ dataUrl: "data:image/png;base64,c2FmZQ==", remoteUrl });
-        mocks.writeLog.mockResolvedValueOnce({ asset: { url: "/api/generation-log-assets/asset-one", remoteUrl } });
+        mocks.writeLog.mockResolvedValueOnce({ asset: { type: "image", storageKey: "asset-one" } });
 
         const step = await createImageTaskUpstreamStep(state, "http://internal", "https://public.example");
         if (step.state !== "result_ready") throw new Error("image result was not ready");
@@ -320,8 +337,8 @@ describe("image task runtime submission safety", () => {
         mocks.directResult.mockImplementation((url?: string) => (url ? { dataUrl: url, remoteUrl: url } : null));
         mocks.writeLog.mockResolvedValueOnce({
             assets: [
-                { type: "image", url: "/api/generation-log-assets/first.png", serverUrl: "/api/generation-log-assets/first.png" },
-                { type: "image", url: "/api/generation-log-assets/second.png", serverUrl: "/api/generation-log-assets/second.png" },
+                { type: "image", storageKey: "first.png" },
+                { type: "image", storageKey: "second.png" },
             ],
         });
 
@@ -330,12 +347,13 @@ describe("image task runtime submission safety", () => {
         await persistImageTaskResult(state, "http://internal", step.resultUrl);
 
         expect(state.result?.results?.map((item) => item.serverUrl)).toEqual(["/api/generation-log-assets/first.png", "/api/generation-log-assets/second.png"]);
+        expect(state.result?.results).toEqual([expect.objectContaining({ storageKey: "first.png", storageKind: "object" }), expect.objectContaining({ storageKey: "second.png", storageKind: "object" })]);
         expect(mocks.register).toHaveBeenCalledWith(
             "user-one",
             expect.objectContaining({
                 assets: [
-                    { type: "image", url: "/api/generation-log-assets/first.png" },
-                    { type: "image", url: "/api/generation-log-assets/second.png" },
+                    { type: "image", url: "/api/generation-log-assets/first.png", storageKey: "first.png", storageKind: "object" },
+                    { type: "image", url: "/api/generation-log-assets/second.png", storageKey: "second.png", storageKind: "object" },
                 ],
             }),
         );
@@ -394,8 +412,8 @@ describe("image task runtime submission safety", () => {
         };
         mocks.writeLog.mockResolvedValueOnce({
             assets: [
-                { type: "image", url: "/api/generation-log-assets/foreground.png", serverUrl: "/api/generation-log-assets/foreground.png" },
-                { type: "image", url: "/api/generation-log-assets/background.png", serverUrl: "/api/generation-log-assets/background.png" },
+                { type: "image", storageKey: "foreground.png" },
+                { type: "image", storageKey: "background.png" },
             ],
         });
 

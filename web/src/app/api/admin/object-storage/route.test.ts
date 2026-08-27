@@ -24,6 +24,8 @@ const settings = {
     region: "auto",
     bucket: "media",
     prefix: "vozeb-pro",
+    publicBaseUrl: "https://img.example.com",
+    imageDeliveryProvider: "cloudflare" as const,
     forcePathStyle: false,
     hasAccessKeyId: true,
     hasSecretAccessKey: true,
@@ -74,12 +76,14 @@ describe("administrator object storage API", () => {
         );
 
         expect(response.status).toBe(200);
-        expect(mocks.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: true, accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true }));
+        expect(mocks.saveSettings).toHaveBeenCalledWith(
+            expect.objectContaining({ enabled: true, publicBaseUrl: "https://img.example.com", imageDeliveryProvider: "cloudflare", accessKeyId: "new-access", secretAccessKey: "new-secret", forcePathStyle: true }),
+        );
         expect(mocks.audit).toHaveBeenCalledWith(
             expect.objectContaining({
                 action: "admin.object-storage.update",
                 target: { type: "object_storage", id: "primary" },
-                metadata: { enabled: true, forcePathStyle: true },
+                metadata: { enabled: true, imageDeliveryProvider: "cloudflare", forcePathStyle: true },
             }),
         );
         expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain("new-secret");

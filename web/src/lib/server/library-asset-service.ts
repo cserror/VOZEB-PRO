@@ -3,6 +3,8 @@ import { nanoid } from "nanoid";
 import type { Asset, CreateLibraryAssetInput } from "@/lib/library-asset-contract";
 import { createLibraryAsset, deleteLibraryAsset, getLibraryAsset, listLibraryAssetPage, updateLibraryAsset } from "@/lib/server/library-asset-store";
 import { deleteUserMediaAssetsCascade } from "@/lib/server/user-media-deletion-service";
+import { resolveMediaDisplayUrls } from "@/lib/server/media-display-url";
+import { MediaReferenceWriteConflict } from "@/lib/server/media-reference-write-guard";
 
 export class LibraryAssetServiceError extends Error {
     constructor(
@@ -13,26 +15,47 @@ export class LibraryAssetServiceError extends Error {
     }
 }
 
-export function listLibraryAssetPageForUser(userId: string, input: { page?: unknown; pageSize?: unknown; kind?: unknown; keyword?: unknown }) {
+export async function listLibraryAssetPageForUser(userId: string, input: { page?: unknown; pageSize?: unknown; kind?: unknown; keyword?: unknown }) {
     const kind = input.kind === "text" || input.kind === "image" || input.kind === "video" || input.kind === "audio" ? input.kind : undefined;
-    return listLibraryAssetPage(userId, {
+    const page = await listLibraryAssetPage(userId, {
         page: positiveInteger(input.page, 1, 1_000_000),
         pageSize: positiveInteger(input.pageSize, 20, 100),
         kind,
         keyword: cleanText(input.keyword, 160),
     });
+    const urls = await resolveMediaDisplayUrls(
+        page.items.flatMap((asset) => (asset.kind !== "text" && asset.data.storageKey ? [asset.data.storageKey] : [])),
+        { thumbnailWidth: 640 },
+    );
+    return {
+        ...page,
+        items: page.items.map((asset) => {
+            if (asset.kind === "text" || !asset.data.storageKey) return asset;
+            const media = urls.get(asset.data.storageKey);
+            return media ? { ...asset, displayUrl: media.displayUrl, thumbnailUrl: media.thumbnailUrl } : asset;
+        }),
+    };
 }
 
-export function createLibraryAssetForUser(userId: string, value: unknown) {
+export async function createLibraryAssetForUser(userId: string, value: unknown) {
     const now = new Date().toISOString();
-    return createLibraryAsset(userId, normalizeAsset(value, { id: `asset-${nanoid()}`, createdAt: now, updatedAt: now }));
+    try {
+        return await createLibraryAsset(userId, normalizeAsset(value, { id: `asset-${nanoid()}`, createdAt: now, updatedAt: now }));
+    } catch (error) {
+        throw libraryMediaWriteError(error);
+    }
 }
 
 export async function updateLibraryAssetForUser(userId: string, id: string, value: unknown) {
     const current = await getLibraryAsset(userId, cleanText(id, 160));
     if (!current) throw new LibraryAssetServiceError("素材不存在", 404);
     const asset = normalizeAsset(value, { id: current.id, createdAt: current.createdAt, updatedAt: new Date().toISOString() });
-    const updated = await updateLibraryAsset(userId, asset);
+    let updated: Asset | null;
+    try {
+        updated = await updateLibraryAsset(userId, asset);
+    } catch (error) {
+        throw libraryMediaWriteError(error);
+    }
     if (!updated) throw new LibraryAssetServiceError("素材不存在", 404);
     return updated;
 }
@@ -82,6 +105,10 @@ function normalizeAsset(value: unknown, identity: Pick<Asset, "id" | "createdAt"
 function stableUrl(value: unknown) {
     const url = cleanText(value, 4000);
     return url && !url.startsWith("data:") && !url.startsWith("blob:") ? url : "";
+}
+
+function libraryMediaWriteError(error: unknown) {
+    return error instanceof MediaReferenceWriteConflict ? new LibraryAssetServiceError(error.message, error.status) : error;
 }
 
 function optionalText(value: unknown, max: number) {
