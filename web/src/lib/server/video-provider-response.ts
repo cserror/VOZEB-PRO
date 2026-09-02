@@ -22,8 +22,8 @@ export function readVideoProviderHttpError(value: string, status: number) {
     }
 }
 
-export function readVideoProviderId(value: unknown) {
-    return readProviderString(value, undefined, VIDEO_PROVIDER_ID_KEYS);
+export function readVideoProviderId(value: unknown, configuredPath?: string) {
+    return readProviderString(value, configuredPath, VIDEO_PROVIDER_ID_KEYS);
 }
 
 export function readVideoProviderStatus(value: unknown, configuredPath?: string) {

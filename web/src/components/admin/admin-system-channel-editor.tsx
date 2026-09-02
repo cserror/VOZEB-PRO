@@ -367,6 +367,9 @@ export function SystemChannelEditor({ channel, fetching, onChange, onDelete, onF
                                         </LabeledControl>
                                     </>
                                 ) : null}
+                                <LabeledControl label="任务 ID 字段">
+                                    <Input value={advanced.taskIdField} placeholder="例如：data.task_id / id" onChange={(event) => updateAdvanced({ taskIdField: event.target.value })} />
+                                </LabeledControl>
                                 <LabeledControl label="结果字段">
                                     <Input value={advanced.resultField} placeholder="例如：data[0].url / content.video_url" onChange={(event) => updateAdvanced({ resultField: event.target.value })} />
                                 </LabeledControl>
@@ -533,6 +536,11 @@ function ModelRouteConfigEditor({ channel, advanced, onChange }: { channel: Syst
                                     ]}
                                     onChange={(cancelMethod) => update({ cancelMethod })}
                                 />
+                            </LabeledControl>
+                        ) : null}
+                        {showAsyncFields ? (
+                            <LabeledControl label="任务 ID 字段">
+                                <Input disabled={definition.strict} value={config.taskIdField || ""} placeholder="data.task_id / id" onChange={(event) => update({ taskIdField: event.target.value })} />
                             </LabeledControl>
                         ) : null}
                         <LabeledControl label="结果字段">

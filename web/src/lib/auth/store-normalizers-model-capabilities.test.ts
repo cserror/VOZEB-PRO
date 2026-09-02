@@ -53,6 +53,7 @@ describe("system channel model capabilities", () => {
                     cancelPath: "/jobs/:task_id/cancel",
                     cancelMethod: "DELETE",
                     requestTemplate: '{"model":"{{model}}"}',
+                    taskIdField: "data.task_id",
                     resultField: "data.url",
                 },
                 text: { capability: "video", createPath: "/invalid" },
@@ -60,7 +61,7 @@ describe("system channel model capabilities", () => {
         } as never);
 
         expect(normalized?.operationConfigs).toEqual({
-            video: expect.objectContaining({ capability: "video", protocol: "custom", createPath: "/jobs", cancelPath: "/jobs/:task_id/cancel", cancelMethod: "DELETE" }),
+            video: expect.objectContaining({ capability: "video", protocol: "custom", createPath: "/jobs", cancelPath: "/jobs/:task_id/cancel", cancelMethod: "DELETE", taskIdField: "data.task_id" }),
         });
     });
 

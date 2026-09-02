@@ -71,6 +71,7 @@ const RESULT_URL_KEYS = new Set([
     "imageBase64",
 ]);
 const STATUS_KEYS = new Set(["status", "state", "task_status", "taskStatus"]);
+const TASK_ID_KEYS = ["task_id", "taskId", "job_id", "jobId", "generation_id", "generationId", "video_id", "videoId", "id"];
 const DOCUMENT_TEMPLATE_FIELDS: Record<string, string> = {
     model: "model",
     prompt: "prompt",
@@ -142,11 +143,12 @@ export function parseChannelExampleConfig(example: string, channel: SystemModelC
     const requestTemplate = requestBody || endpoint ? buildRequestTemplate(requestBody, kind, protocol, documentFields) : "";
     const resultField = inferResultField(jsonBlocks, requestBody, kind, raw);
     const statusField = inferStatusField(jsonBlocks, requestBody, raw);
+    const taskIdField = inferTaskIdField(jsonBlocks, requestBody, raw);
     const referenceFields = uniqueList([...(requestBody && isRecord(requestBody) ? collectReferenceFields(requestBody) : []), ...documentFields.filter((field) => isReferenceKey(field))]);
     const referenceRule = inferReferenceRule(raw, kind, protocol, referenceFields);
     const apiKey = extractBearerKey(raw);
 
-    if (!endpoint && !requestBody && !model && !apiKey && !resultField && !statusField) return null;
+    if (!endpoint && !requestBody && !model && !apiKey && !resultField && !statusField && !taskIdField) return null;
 
     const advancedPatch: Partial<SystemChannelAdvancedConfig> = {
         protocol,
@@ -154,6 +156,7 @@ export function parseChannelExampleConfig(example: string, channel: SystemModelC
         ...(model && (kind === "image" || kind === "image-edit") ? { imageModel: model } : {}),
         ...(model && kind === "video" ? { videoModel: model } : {}),
         ...(requestTemplate ? { requestTemplate } : {}),
+        ...(taskIdField ? { taskIdField } : {}),
         ...(resultField ? { resultField } : {}),
         ...(statusField ? { statusField } : {}),
         ...(referenceRule ? { referenceRule } : {}),
@@ -188,6 +191,7 @@ export function parseChannelExampleConfig(example: string, channel: SystemModelC
         `协议：${protocolLabel(protocol)}`,
         kindLabel(kind),
         referenceFields.length ? `参考字段：${referenceFields.join("、")}` : "",
+        taskIdField ? `任务 ID 字段：${taskIdField}` : "",
         resultField ? `结果字段：${resultField}` : "",
     ].filter(Boolean);
 
@@ -458,6 +462,19 @@ function inferStatusField(blocks: unknown[], requestBody: unknown, raw = "") {
     if (paths.length) return paths.slice(0, 3).join(" / ");
     const documented = documentResponseFields(raw, STATUS_KEYS);
     if (documented.length) return documented.slice(0, 3).join(" / ");
+    return "";
+}
+
+function inferTaskIdField(blocks: unknown[], requestBody: unknown, raw = "") {
+    const responseBlocks = blocks.filter((block) => block !== requestBody);
+    for (const key of TASK_ID_KEYS) {
+        const paths = uniqueList(responseBlocks.flatMap((block) => collectMatchingPaths(block, (candidate) => candidate === key)));
+        if (paths.length) return paths[0];
+    }
+    for (const key of TASK_ID_KEYS) {
+        const documented = documentResponseFields(raw, new Set([key]));
+        if (documented.length) return documented[0];
+    }
     return "";
 }
 

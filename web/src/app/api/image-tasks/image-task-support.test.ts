@@ -247,6 +247,7 @@ describe("GlobalAiOpc image task paths", () => {
                                     apiFormat: "openai",
                                     createPath: "/images/generations",
                                     editPath: "/images/edits",
+                                    taskIdField: "data.task_id",
                                     supportsReferenceImage: true,
                                 },
                             },
@@ -265,7 +266,7 @@ describe("GlobalAiOpc image task paths", () => {
             } as never,
         );
 
-        expect(resolved?.advancedConfig).toMatchObject({ protocol: "openai", editPath: "/images/edits", supportsReferenceImage: true });
+        expect(resolved?.advancedConfig).toMatchObject({ protocol: "openai", editPath: "/images/edits", taskIdField: "data.task_id", supportsReferenceImage: true });
     });
 
     it("recognizes Pydantic dictionary errors as an incompatible edit payload", () => {

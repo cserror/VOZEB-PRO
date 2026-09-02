@@ -78,7 +78,21 @@ describe("audio task runtime submission safety", () => {
     });
 
     it("persists an asynchronous upstream task identity before returning", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ id: "audio-upstream-one" })));
+        state = {
+            ...audioTask(),
+            config: {
+                ...audioTask().config,
+                advancedConfig: {
+                    ...emptyAdvancedConfig(),
+                    protocol: "custom",
+                    createPath: "/audio/speech",
+                    queryPath: "/audio/speech/:task_id",
+                    taskIdField: "data.task_id",
+                },
+            },
+            candidateConfigs: [],
+        };
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(Response.json({ data: { task_id: "audio-upstream-one" }, request_id: "request-trace-one" })));
 
         await expect(createAudioTaskUpstreamStep(state, "http://internal")).resolves.toMatchObject({ state: "pending", upstreamTaskId: "audio-upstream-one" });
 

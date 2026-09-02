@@ -81,9 +81,10 @@ describe("text task runtime recovery", () => {
     });
 
     it("persists an asynchronous task ID and queries only one step per worker run", async () => {
+        state.config.advancedConfig = { ...state.config.advancedConfig!, taskIdField: "data.task_id" };
         const fetchMock = vi
             .fn()
-            .mockResolvedValueOnce(Response.json({ task_id: "upstream-one", status: "queued" }))
+            .mockResolvedValueOnce(Response.json({ data: { task_id: "upstream-one" }, request_id: "request-trace-one", status: "queued" }))
             .mockResolvedValueOnce(Response.json({ status: "processing" }))
             .mockResolvedValueOnce(Response.json({ status: "completed", data: { output: "最终结果" } }));
         vi.stubGlobal("fetch", fetchMock);

@@ -74,7 +74,7 @@ export function parseDeterministicProtocolDraft(input: { text: string; documenta
             const request = exampleRequestLine(text);
             if (request && looksLikeModelCatalogPath(request.path)) return [];
             const role = requestRole(request);
-            const capability = parsedCapability(advanced) || capabilityFromPath(request?.path || "");
+            const capability = parsedCapability(advanced, text) || capabilityFromPath(request?.path || "");
             if (!capability) return [];
             const explicitPath = request && !request.absolute ? request.path : "";
             const createPath = role === "create" ? explicitPath || advanced.createPath : "";
@@ -89,6 +89,7 @@ export function parseDeterministicProtocolDraft(input: { text: string; documenta
                 ...(role === "query" && request ? { queryPath: request.path } : role === "create" && advanced.queryPath ? { queryPath: advanced.queryPath } : {}),
                 ...(role === "cancel" && request ? { cancelPath: request.path, cancelMethod: request.method === "DELETE" ? "DELETE" : "POST" } : {}),
                 ...(role === "create" && advanced.requestTemplate ? { requestTemplate: advanced.requestTemplate } : {}),
+                ...(role !== "cancel" && advanced.taskIdField ? { taskIdField: advanced.taskIdField } : {}),
                 ...(role !== "cancel" && advanced.resultField ? { resultField: advanced.resultField } : {}),
                 ...(role !== "cancel" && advanced.statusField ? { statusField: advanced.statusField } : {}),
                 ...(role === "create" && advanced.durationRange ? { durationRange: advanced.durationRange } : {}),
@@ -195,6 +196,7 @@ function operationFromUnknown(value: unknown, defaultApiFormat: ApiCallFormat): 
         ...optionalPath("cancelPath", rawConfig.cancelPath),
         ...(rawConfig.cancelMethod === "DELETE" || rawConfig.cancelMethod === "POST" ? { cancelMethod: rawConfig.cancelMethod } : {}),
         ...optionalText("requestTemplate", rawConfig.requestTemplate, 12_000),
+        ...optionalText("taskIdField", rawConfig.taskIdField, 500),
         ...optionalText("resultField", rawConfig.resultField, 500),
         ...optionalText("statusField", rawConfig.statusField, 500),
         ...optionalText("durationRange", rawConfig.durationRange, 120),
@@ -271,8 +273,8 @@ function capabilityFromPath(path: string): LogicalModelCapability | null {
     return null;
 }
 
-function parsedCapability(config: ReturnType<typeof emptyAdvancedConfig>): LogicalModelCapability | null {
-    const evidence = `${config.createPath}\n${config.requestTemplate}\n${config.resultField}`;
+function parsedCapability(config: ReturnType<typeof emptyAdvancedConfig>, example = ""): LogicalModelCapability | null {
+    const evidence = `${config.createPath}\n${config.requestTemplate}\n${config.resultField}\n${example}`;
     if (config.videoModel || config.imageToVideoPath || /video|videos|i2v|t2v|video_url|\.mp4/i.test(evidence)) return "video";
     if (config.imageModel || config.editPath || /image|images|txt2img|img2img|image_url|b64_json/i.test(evidence)) return "image";
     if (config.textModel || /chat|responses|completions|choices\[0\]\.message/i.test(evidence)) return "text";
@@ -308,6 +310,7 @@ function mergeOperationConfig(current: SystemChannelModelConfig, incoming: Syste
     merged.supportsReferenceImage = Boolean(current.supportsReferenceImage || incoming.supportsReferenceImage);
     merged.supportsReferenceVideo = Boolean(current.supportsReferenceVideo || incoming.supportsReferenceVideo);
     merged.supportsReferenceAudio = Boolean(current.supportsReferenceAudio || incoming.supportsReferenceAudio);
+    merged.taskIdField = mergeFieldPaths(current.taskIdField, incoming.taskIdField);
     merged.resultField = mergeFieldPaths(current.resultField, incoming.resultField);
     merged.statusField = mergeFieldPaths(current.statusField, incoming.statusField);
     return merged;
@@ -403,7 +406,7 @@ function optionalPath(key: "createPath" | "editPath" | "imageToVideoPath" | "que
     return path && isApiPath(path) ? { [key]: path } : {};
 }
 
-function optionalText<K extends "requestTemplate" | "resultField" | "statusField" | "durationRange" | "referenceRule" | "authHeader" | "authPrefix">(key: K, value: unknown, max: number) {
+function optionalText<K extends "requestTemplate" | "taskIdField" | "resultField" | "statusField" | "durationRange" | "referenceRule" | "authHeader" | "authPrefix">(key: K, value: unknown, max: number) {
     const text = cleanText(value, max);
     return text ? ({ [key]: text } as Record<K, string>) : {};
 }

@@ -174,7 +174,7 @@ async function createCustomTextTaskStep(task: TextTask, origin: string, cookie: 
     }
     const content = readProviderString(data, protocol.resultField, TEXT_RESULT_KEYS);
     if (content) return { content, ...readBilling(response.headers) };
-    const taskId = readProviderString(data, undefined, TASK_ID_KEYS);
+    const taskId = readProviderString(data, config.advancedConfig?.taskIdField, TASK_ID_KEYS);
     if (taskId && config.advancedConfig?.queryPath) return { state: "pending" as const, status: "submitted", upstreamTaskId: taskId, createPath, ...readBilling(response.headers) };
     throw new GenerationSubmissionUncertainError("自定义文本接口没有按配置返回内容或任务 ID");
 }

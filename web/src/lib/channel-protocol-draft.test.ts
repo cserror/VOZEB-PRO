@@ -92,13 +92,13 @@ DELETE /v1/videos/:task_id`,
         const draft = parseDeterministicProtocolDraft({
             text: [
                 `curl --url https://api.example.com/custom/videos --header 'Content-Type: application/json' --data '{"model":"video-v1","prompt":"test"}'`,
-                `{"data":{"task_id":"task-1","status":"queued"}}`,
-                `curl --url https://api.example.com/custom/results/{task_id} --header 'X-API-Key: token'`,
-                `{"data":{"status":"completed","video_url":"https://cdn.example.com/video.mp4"}}`,
+                `{"code":"Success","data":{"task_id":"task-1","status":"queued"},"request_id":"request-1"}`,
+                `curl --request GET --url https://api.example.com/custom/results/{task_id} --header 'X-API-Key: token'`,
+                `{"code":"Success","data":{"task_id":"task-1","status":"completed","results":[{"url":"https://cdn.example.com/video.mp4","type":"video"}]},"request_id":"request-2"}`,
             ].join("\n"),
         });
 
-        expect(draft?.operations[0]?.config).toMatchObject({ createPath: "/custom/videos", queryPath: "/custom/results/:task_id", resultField: "data.video_url", statusField: "data.status" });
+        expect(draft?.operations[0]?.config).toMatchObject({ createPath: "/custom/videos", queryPath: "/custom/results/:task_id", taskIdField: "data.task_id", resultField: "data.results[0].url", statusField: "data.status" });
     });
 
     it("extracts rendered API documentation without cURL or JSON examples", () => {

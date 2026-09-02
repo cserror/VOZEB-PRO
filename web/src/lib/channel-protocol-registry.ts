@@ -482,6 +482,7 @@ export function emptyAdvancedConfig(): SystemChannelAdvancedConfig {
         imageToVideoPath: "",
         queryPath: "",
         requestTemplate: "",
+        taskIdField: "",
         resultField: "",
         statusField: "",
         durationRange: "",

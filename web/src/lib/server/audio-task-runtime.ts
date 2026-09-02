@@ -92,7 +92,7 @@ export async function createAudioTaskUpstreamStep(task: AudioTask, origin: strin
                 });
                 return { state: "result_ready", status: "completed", resultUrl: directUrl, ...billing };
             }
-            const id = readProviderString(data, undefined, ID_KEYS);
+            const id = readProviderString(data, config.advancedConfig?.taskIdField, ID_KEYS);
             if (!id) throw new GenerationSubmissionUncertainError("音频接口没有返回音频或任务 ID，创建结果待确认");
             await updateAudioTask(task.id, { upstream: { id, createPath: path } });
             const submittedAt = Date.now();

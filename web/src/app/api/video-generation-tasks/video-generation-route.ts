@@ -436,7 +436,7 @@ export async function createUpstream(
             throw new SafeCandidateFailure(providerError || "视频接口请求失败");
         }
         const resultUrl = readVideoProviderUrl(data, channel.advancedConfig?.resultField);
-        const id = readVideoProviderId(data) || (resultUrl ? `direct:${Date.now()}` : "");
+        const id = readVideoProviderId(data, channel.advancedConfig?.taskIdField) || (resultUrl ? `direct:${Date.now()}` : "");
         if (!id) {
             throw new VideoSubmissionUncertainError(providerError || "视频接口没有返回任务 ID", videoSubmissionBilling(response.headers, raw, multipliers));
         }

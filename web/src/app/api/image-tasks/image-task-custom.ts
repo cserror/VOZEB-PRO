@@ -76,7 +76,7 @@ export async function runCustomImageTask(task: ImageTask, origin: string, public
         const mediaBaseUrl = response.headers.get("x-vozeb-pro-upstream-url") || url;
         const direct = configuredImageResult(data, mediaBaseUrl, task);
         if (direct) return direct;
-        const taskId = readImageTaskId(data);
+        const taskId = readImageTaskId(data, advanced.taskIdField);
         if (!taskId || !advanced.queryPath) throw new GenerationSubmissionUncertainError("自定义图片接口没有返回图片或任务 ID，创建结果待确认");
         if (singleStep) return { dataUrl: "", pending: { id: taskId, mediaBaseUrl, pollBaseUrl: url } };
         return pollCustomImageTask(task, taskId, mediaBaseUrl, url, cookie);
