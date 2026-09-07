@@ -13,6 +13,16 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 `POST /api/auth/register` 的公开注册请求必须显式提交 `policyAccepted: true`。服务端不接受客户端提供协议版本，而是在创建用户的同一事务中读取当前站点条款/隐私链接与版本并保存同意时间；未同意时返回 `400`，管理员代建账号不会生成用户同意记录。首次安装管理员仍由一次性安装令牌保护，不属于公开注册协议流程。
 
+## 视频任务结果获取
+
+渠道 `resultField` 表示响应 JSON 字段路径，不是下载请求路径。OpenAI / New API 视频预设使用 `video_url`；未返回该扩展字段的标准视频接口通过独立内容接口获取结果。部署不会批量重写数据库中的渠道配置或历史任务快照。
+
+服务端先判断上游明确失败，避免残留 URL 覆盖失败状态。任务成功且有结果 URL 时沿用媒体代理下载；`openai`、`newapi`、`seedance-special` 协议成功但没有 URL 时，探测 `/v1/videos/{id}/content` 和 `/videos/{id}/content`，使用当前任务身份与模型头。先 HEAD，HEAD 不支持或网络失败时使用 `Range: bytes=0-0` 的 GET；真实下载同样保留身份及模型头，不将服务端凭据发送到外部成片 CDN。
+
+只有 Seedance special 保留旧有的“查询接口不可用时尝试内容接口”行为；其他协议须先得到成功任务 JSON。自定义及其他供应商协议不猜测 OpenAI 内容路径。历史 `resultField=/videos/:task_id/content` 仍只是无效字段配置，不会被当作任意请求地址执行；标准字段读取和上述受限内容流程可接管。
+
+内容暂不可下载作为可恢复查询异常，沿用原任务 ID 和已有重查窗口；进入 `result_ready` 后，下载或保存失败只重试持久化，窗口用尽进入 `needs_review`。不自动再次创建上游视频，不因内容下载失败直接退款。已有失败且已退款任务的人工恢复与账务处理需另行确认。
+
 ## 管理员 MFA
 
 `POST /api/auth/login` 保留现有兼容响应。管理员密码正确且已启用 MFA、但请求未提交 `totpCode` 时返回 `401` 与 `{ error, mfaRequired: true }`，此时不得创建 Session；普通用户和未启用 MFA 的管理员不进入该挑战。动态码错误仍返回 `401`，只有密码和 TOTP 都通过后才返回用户并设置 Session Cookie。

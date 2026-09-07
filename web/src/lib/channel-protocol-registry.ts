@@ -39,7 +39,7 @@ const openAiOperations: ChannelProtocolDefinition["operations"] = {
         imageToVideoPath: "/videos",
         queryPath: "/videos/:task_id",
         requestTemplate: "multipart/form-data: model、prompt、seconds、size、input_reference",
-        resultField: "/videos/:task_id/content",
+        resultField: "video_url",
         statusField: "status",
         referenceRule: "参考图使用 multipart/form-data 的单个 input_reference 文件字段。",
         supportsReferenceImage: true,

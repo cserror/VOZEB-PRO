@@ -35,10 +35,16 @@ export async function queryVideoTaskUpstream(task: VideoTask, origin: string, co
     const data = await queryVideoUpstream(task, origin, cookie, workerUserId);
     const status = readVideoProviderStatus(data, task.config.advancedConfig?.statusField);
     const resultUrl = readVideoProviderUrl(data, task.config.advancedConfig?.resultField);
+    if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readProviderError(data) || "视频生成失败" };
+    if (!resultUrl && VIDEO_PROVIDER_SUCCESS.has(status) && ["openai", "newapi", "seedance-special"].includes(task.config.advancedConfig?.protocol || "")) {
+        const contentPath = await readyVideoContentPath(task, origin, cookie, workerUserId);
+        if (contentPath) return { state: "result_ready", status, resultUrl: contentPath };
+        // Query errors retain the upstream ID and enter the existing recovery policy.
+        throw new Error("视频已生成，但内容暂时无法下载；请重取原任务结果");
+    }
     if (resultUrl || VIDEO_PROVIDER_SUCCESS.has(status)) {
         return resultUrl ? { state: "result_ready", status: status || "completed", resultUrl } : { state: "failed", status: status || "completed", error: "视频任务已完成但没有返回视频地址" };
     }
-    if (isProviderBusinessError(data) || VIDEO_PROVIDER_FAILED.has(status)) return { state: "failed", status: status || "failed", error: readProviderError(data) || "视频生成失败" };
     return { state: "pending", status: status || "processing" };
 }
 
@@ -90,7 +96,7 @@ async function completeVideoTask(task: VideoTask, resultUrl: string, origin: str
     });
     await updateVideoTask(task.id, { attempts });
     const channelId = task.config.channelId || systemGenerationChannelId(task.config.baseUrl);
-    const workerHeaders = new Headers(workerUserId ? maintenanceWorkerHeaders(workerUserId) : undefined);
+    const workerHeaders = new Headers(videoProxyHeaders(task, "", workerUserId));
     if (/^https?:\/\//i.test(resultUrl) && channelId) {
         Object.entries(generationMediaProxyHeaders({ userId: task.userId, taskType: "video", taskId: task.id, channelId, upstreamModel: task.config.model, url: resultUrl })).forEach(([key, value]) => workerHeaders.set(key, value));
     }

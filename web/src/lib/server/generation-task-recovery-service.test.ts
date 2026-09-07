@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
     updateImageTask: vi.fn(),
     getVideoTask: vi.fn(),
     queryVideoTaskUpstream: vi.fn(),
+    persistVideoTaskResult: vi.fn(),
+    failVideoTaskFromWorker: vi.fn(),
     getAudioTask: vi.fn(),
     updateAudioTask: vi.fn(),
     queryAudioTaskUpstreamStep: vi.fn(),
@@ -48,7 +50,7 @@ vi.mock("@/lib/server/agent-run-executor", () => ({ executeAgentRun: mocks.execu
 vi.mock("@/lib/server/agent-run-execution", () => ({ processAgentRunReview: mocks.processAgentRunReview }));
 vi.mock("@/lib/server/agent-run-store", () => ({ getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/maintenance-auth", () => ({ maintenanceWorkerContext: vi.fn((userId: string) => `worker-context:${userId}`) }));
-vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: vi.fn(), persistVideoTaskResult: vi.fn(), queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
+vi.mock("@/lib/server/video-task-runtime", () => ({ failVideoTaskFromWorker: mocks.failVideoTaskFromWorker, persistVideoTaskResult: mocks.persistVideoTaskResult, queryVideoTaskUpstream: mocks.queryVideoTaskUpstream }));
 vi.mock("@/lib/server/video-task-store", () => ({ getVideoTask: mocks.getVideoTask }));
 vi.mock("@/lib/server/audio-task-runtime", () => ({ createAudioTaskUpstreamStep: vi.fn(), markAudioTaskFailed: vi.fn(), persistAudioTaskResult: vi.fn(), queryAudioTaskUpstreamStep: mocks.queryAudioTaskUpstreamStep }));
 vi.mock("@/lib/server/audio-task-store", () => ({ getAudioTask: mocks.getAudioTask, updateAudioTask: mocks.updateAudioTask }));
@@ -196,6 +198,33 @@ describe("generation task recovery service", () => {
         expect(mocks.nextVisualPoll).toHaveBeenCalledOnce();
         expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "polling", lastUpstreamStatus: "processing" }));
         expect(result).toMatchObject({ claimed: 1, pending: 1 });
+    });
+
+    it("persists a completed content path in the lease for recovery without resubmitting", async () => {
+        const task = { id: "video-content", userId: "user-one", status: "running", upstream: { id: "upstream-one" }, config: {}, createdAt: Date.now() };
+        const resultUrl = "/v1/videos/upstream-one/content";
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "video", status: "running", executionPhase: "polling", upstreamTaskId: task.upstream.id, submittedAt: Date.now() }]);
+        mocks.getVideoTask.mockResolvedValue(task);
+        mocks.queryVideoTaskUpstream.mockResolvedValue({ state: "result_ready", status: "completed", resultUrl });
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+        expect(result).toMatchObject({ resultReady: 1 });
+        expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "result_ready", resultPayload: { url: resultUrl } }));
+        expect(mocks.failVideoTaskFromWorker).not.toHaveBeenCalled();
+    });
+
+    it("retries only persistence when a completed video's download fails", async () => {
+        const task = { id: "video-download", userId: "user-one", status: "running", upstream: { id: "upstream-one" }, config: {}, createdAt: Date.now() };
+        const resultUrl = "/v1/videos/upstream-one/content";
+        mocks.claim.mockResolvedValue([{ ...lease(), id: task.id, userId: task.userId, type: "video", status: "running", executionPhase: "result_ready", upstreamTaskId: task.upstream.id, resultPayload: { url: resultUrl }, submittedAt: Date.now() }]);
+        mocks.getVideoTask.mockResolvedValue(task);
+        mocks.persistVideoTaskResult.mockRejectedValueOnce(new Error("fixture content download unavailable"));
+        const result = await runGenerationTaskRecoveryBatch({ origin: "http://internal", workerId: "worker-one" });
+        expect(result).toMatchObject({ deferred: 1, failed: 0 });
+        expect(mocks.queryVideoTaskUpstream).not.toHaveBeenCalled();
+        expect(mocks.persistVideoTaskResult).toHaveBeenCalledWith(task, resultUrl, "http://internal", "", task.userId);
+        expect(mocks.release).toHaveBeenCalledWith("video", task.id, "worker-one", expect.objectContaining({ executionPhase: "persisting", resultPayload: expect.objectContaining({ url: resultUrl }) }));
+        expect(mocks.failVideoTaskFromWorker).not.toHaveBeenCalled();
+        expect(mocks.refundVideoTask).not.toHaveBeenCalled();
     });
 
     it("stops automatic video polling at the configured model deadline without losing the upstream id", async () => {

@@ -248,6 +248,82 @@ describe("video task upstream reconciliation", () => {
         expect(await refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).toEqual(task);
         expect(mocks.fetchInternalApi).not.toHaveBeenCalled();
     });
+
+    it.each(["newapi", "openai", "seedance-special"])("downloads completed %s JSON without a URL using authenticated content", async (protocol) => {
+        const task = videoTask();
+        task.config.advancedConfig = { protocol, queryPath: "/v1/videos/:task_id", resultField: "/videos/:task_id/content" } as NonNullable<VideoTask["config"]["advancedConfig"]>;
+        mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValue(task);
+        mocks.complete.mockResolvedValue({ ...task, status: "success" });
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "HEAD"
+            ? new Response(null, { headers: { "content-type": "video/mp4" } })
+            : json({ id: task.upstream.id, object: "video", status: "completed" }));
+
+        await refreshVideoTaskFromUpstream(task, "http://localhost", "session=test");
+
+        expect(mocks.fetchInternalApi).toHaveBeenCalledWith(`http://localhost${task.config.baseUrl}/v1/videos/${task.upstream.id}/content`, expect.objectContaining({ method: "HEAD", headers: expect.objectContaining({ cookie: "session=test" }) }));
+        expect(mocks.normalize).toHaveBeenCalledWith(expect.objectContaining({ url: `${task.config.baseUrl}/v1/videos/${task.upstream.id}/content` }));
+        const downloadHeaders = new Headers(mocks.normalize.mock.calls[0][0].internalHeaders);
+        expect(downloadHeaders.get("x-vozeb-pro-upstream-model")).toBe(task.config.model);
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(mocks.fail).not.toHaveBeenCalled();
+    });
+
+    it("keeps the original completed task recoverable when content is temporarily unavailable", async () => {
+        const task = videoTask();
+        task.config.advancedConfig = { protocol: "newapi", queryPath: "/v1/videos/:task_id", resultField: "video_url" } as NonNullable<VideoTask["config"]["advancedConfig"]>;
+        mocks.claim.mockResolvedValue(task);
+        mocks.fetchInternalApi.mockImplementation(async (_url: string, init?: RequestInit) => init?.method === "HEAD" ? json({}, 503) : json({ status: "completed" }));
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).rejects.toThrow(/视频.*下载/);
+        expect(mocks.fail).not.toHaveBeenCalled();
+        expect(mocks.refund).not.toHaveBeenCalled();
+        expect(task.upstream.id).toBe("videos_one");
+    });
+
+    it("never lets a stale URL override an explicit upstream failure", async () => {
+        mocks.fetchInternalApi.mockResolvedValue(json({ status: "failed", video_url: "https://cdn.example.com/stale.mp4", error: "generation rejected" }));
+        await expect(queryVideoTaskUpstream(videoTask(), "http://localhost")).resolves.toMatchObject({ state: "failed", error: "generation rejected" });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+    });
+
+    it("does not guess OpenAI content paths for an unrelated custom protocol", async () => {
+        const task = videoTask();
+        task.config.advancedConfig = { protocol: "custom", queryPath: "/jobs/:task_id" } as NonNullable<VideoTask["config"]["advancedConfig"]>;
+        mocks.fetchInternalApi.mockResolvedValue(json({ status: "completed" }));
+        await expect(queryVideoTaskUpstream(task, "http://localhost")).resolves.toMatchObject({ state: "failed" });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+    });
+
+    it("uses an authenticated Range GET when the content endpoint does not support HEAD", async () => {
+        const task = videoTask();
+        task.config.advancedConfig = { protocol: "newapi", queryPath: "/v1/videos/:task_id", resultField: "video_url" } as NonNullable<VideoTask["config"]["advancedConfig"]>;
+        const token = "fixture-worker-token-for-content-download";
+        vi.stubEnv("VOZEB_PRO_WORKER_TOKEN", token);
+        vi.stubEnv("VOZEB_PRO_MAINTENANCE_TOKEN", `${token}-maintenance`);
+        mocks.fetchInternalApi.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (!url.endsWith("/content")) return json({ status: "completed" });
+            if (init?.method === "HEAD") return new Response(null, { status: 405 });
+            const headers = new Headers(init?.headers);
+            expect(headers.get("range")).toBe("bytes=0-0");
+            expect(headers.get("authorization")).toBe(`Bearer ${token}`);
+            expect(headers.get("x-vozeb-pro-worker-user-id")).toBe(task.userId);
+            return new Response(new Uint8Array([0]), { status: 206, headers: { "content-type": "video/mp4" } });
+        });
+        await expect(queryVideoTaskUpstream(task, "http://localhost", "", task.userId)).resolves.toMatchObject({ state: "result_ready", resultUrl: `/v1/videos/${task.upstream.id}/content` });
+        expect(mocks.fetchInternalApi).toHaveBeenCalledTimes(3);
+    });
+
+    it("does not mark generation failed or refund when saving a completed video fails", async () => {
+        const task = videoTask();
+        mocks.claim.mockResolvedValue(task);
+        mocks.get.mockResolvedValue(task);
+        mocks.fetchInternalApi.mockResolvedValue(json({ status: "completed", video_url: "https://cdn.example.com/result.mp4" }));
+        mocks.normalize.mockRejectedValueOnce(new Error("fixture download failed"));
+        await expect(refreshVideoTaskFromUpstream(task, "http://localhost", "session=test")).rejects.toThrow("fixture download failed");
+        expect(mocks.fetchInternalApi).toHaveBeenCalledOnce();
+        expect(mocks.fail).not.toHaveBeenCalled();
+        expect(mocks.refund).not.toHaveBeenCalled();
+    });
 });
 
 function videoTask(patch: Partial<VideoTask> = {}): VideoTask {

@@ -26,6 +26,10 @@ const channel = {
     enabled: false,
 } satisfies SystemModelChannel;
 
+it.each(["openai", "newapi"] as const)("%s video resultField names a JSON field, not a download path", (protocol) => {
+    expect(channelProtocolDefinition(protocol).operations.video?.resultField).toBe("video_url");
+});
+
 describe("channel protocol registry", () => {
     it("exposes only active protocols and keeps SD2 separate from Stable Diffusion", () => {
         const protocols = channelProtocolOptions().map((item) => item.value);

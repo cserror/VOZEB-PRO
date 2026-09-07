@@ -32,7 +32,7 @@ vi.mock("@/lib/server/security", () => ({
     rateLimitHeaders: vi.fn(() => ({ "Retry-After": "60" })),
 }));
 
-import { GET, maxDuration, POST, PUT } from "./route";
+import { GET, HEAD, maxDuration, POST, PUT } from "./route";
 import { CREATIVE_UPLOAD_MAX_BYTES } from "@/lib/creative-upload";
 import { MEDIA_SNIFF_RANGE } from "@/lib/server/media-content-validation";
 import { SYSTEM_PROXY_JSON_BODY_MAX_BYTES } from "@/lib/server/system-proxy-request-limits";
@@ -408,6 +408,26 @@ describe("GlobalAiOpc native text proxy", () => {
 
         expect(response.status).toBe(200);
         expect(fetchMock.mock.calls[0][0]).toBe("https://zcbservice.aizfw.cn/kyyReactApiServer/v1/result/video-one");
+    });
+
+    it.each(["GET", "HEAD"])("authorizes an owned New API content %s without charging for another generation", async (method) => {
+        mocks.getAuthSettings.mockResolvedValue({
+            generationPointMultipliers: {},
+            logicalModels: [logicalModel("video-model", "video", "vendor-video")],
+            systemChannels: [{ id: "channel-one", enabled: true, baseUrl: "https://api.example.com/v1", apiKey: "fixture-gateway-key", apiFormat: "openai", models: ["vendor-video"], advancedConfig: { protocol: "newapi" } }],
+        });
+        const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(method === "GET" ? mp4Bytes() : null, { headers: { "content-type": "video/mp4" } }));
+        const handler = method === "GET" ? GET : HEAD;
+        const response = await handler(new Request("http://localhost/api/ai/system/channel-one/v1/videos/video-one/content", {
+            method, headers: systemModelHeaders("video-model", "vendor-video"),
+        }), { params: Promise.resolve({ channelId: "channel-one", path: ["v1", "videos", "video-one", "content"] }) });
+        expect(response.status).toBe(200);
+        expect(mocks.taskAccess).toHaveBeenCalledWith({ userId: "user-one", capability: "video", channelId: "channel-one", upstreamModel: "vendor-video", upstreamTaskId: "video-one" });
+        expect(fetchMock.mock.calls[0][0]).toBe("https://api.example.com/v1/videos/video-one/content");
+        expect(new Headers(fetchMock.mock.calls[0][1]?.headers).get("authorization")).toBe("Bearer fixture-gateway-key");
+        expect(mocks.consumeUserPoints).not.toHaveBeenCalled();
+        expect(mocks.refundUserPoints).not.toHaveBeenCalled();
+        await response.body?.cancel();
     });
 
     it("maps internal Chat calls to Claude Messages and leaves Responses for Chat fallback", async () => {
