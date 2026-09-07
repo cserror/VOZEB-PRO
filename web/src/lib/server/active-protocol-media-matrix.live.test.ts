@@ -36,6 +36,18 @@ describe("active media protocols over TCP fixtures", () => {
         await new Promise<void>((resolve, reject) => fixture.server.close((error?: Error) => (error ? reject(error) : resolve())));
     });
 
+    it.each(["seedance-2.0-480p", "seedance-2.0-720p"])("sends %s references as JSON URLs, including explicit first frames", async (model) => {
+        for (const role of ["reference", "first_frame"] as const) {
+            const config = videoConfig("newapi", origin, model);
+            const referenceUrl = `${origin}/media/fixture.png`;
+            await createUpstream("user-live", "", "", config, "animate", { videoSeconds: 5, size: "16:9" }, [{ type: "image", role, url: referenceUrl }], MULTIPLIERS, `${model}-${role}`);
+            const request = fixture.requests.filter((item) => item.method === "POST").at(-1)!;
+            expect(request.contentType).toContain("application/json");
+            expect(JSON.parse(request.body.toString("utf8"))).toEqual({ model, prompt: "animate", seconds: 5, size: "16:9", input_reference: referenceUrl });
+        }
+        expect(fixture.requests.some((item) => item.path === "/media/fixture.png")).toBe(false);
+    });
+
     it.each(STRICT_IMAGE_PROTOCOLS)("completes $id image creation with its registered request shape", async (definition) => {
         const model = definition.builtInModels?.find((item) => item.capability === "image")?.id || "mock-image";
         const operation = definition.operations.image!;

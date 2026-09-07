@@ -13,6 +13,12 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 `POST /api/auth/register` 的公开注册请求必须显式提交 `policyAccepted: true`。服务端不接受客户端提供协议版本，而是在创建用户的同一事务中读取当前站点条款/隐私链接与版本并保存同意时间；未同意时返回 `400`，管理员代建账号不会生成用户同意记录。首次安装管理员仍由一次性安装令牌保护，不属于公开注册协议流程。
 
+## New API 视频请求模板
+
+本项目 `newapi` 视频预设使用 JSON URL 契约：`{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}`。普通参考图或显式首帧以供上游访问的 URL 字符串传入 `input_reference`，不下载后再作为 multipart 文件上传；时长变量仍按现有渲染器保留数值类型。此契约用于本项目接入的 URL 型视频聚合插件，不代表所有 New API 部署均支持此方式。普通 `openai` 视频预设仍保留 multipart，New API 的文本、图片和音频预设不变。
+
+后台严格协议保存校验与模型同步共用该注册表。代码更新不会自动重写已保存的渠道：上线时须备份后显式更新目标渠道的视频 `modelConfigs` 和 `operationConfigs.video` 请求模板，并刷新旧后台页面，再验证保存、刷新和同步后模板仍为 JSON URL。历史任务快照、失败任务和账务不自动修改。
+
 ## 视频任务结果获取
 
 渠道 `resultField` 表示响应 JSON 字段路径，不是下载请求路径。OpenAI / New API 视频预设使用 `video_url`；未返回该扩展字段的标准视频接口通过独立内容接口获取结果。部署不会批量重写数据库中的渠道配置或历史任务快照。

@@ -5,6 +5,7 @@ description: VOZEB PRO 当前版本需要人工或真实环境确认的事项
 
 # 待测试
 
+- New API 视频 JSON URL 预设及显式首帧映射已完成本地修复：186 项专项测试、TypeScript 与隔离后台保存/刷新回归通过。仍需在部署新代码并显式更新线上已保存模板后，验证 480p/720p 配置保存及模型同步不恢复 multipart；真实参考图/首帧创建、轮询、content 下载、R2 保存和单次扣费/失败退款须经有限额度授权后验收。本轮未执行生产写入或付费生成。
 - 自定义异步协议已支持显式配置任务 ID 字段，并在文本、图片、视频和音频运行时优先按该路径读取；AutoDL ComfyUI 文档样例对应 `taskIdField=data.task_id`、`statusField=data.status`、`resultField=data.results[0].url`，查询路径为 `/api/v1/comfyui/comfyui_workflow/result/:task_id`，顶层 `request_id` 只作单次 HTTP 请求追踪。本地自动化和后台响应式页面已通过；仍需在部署后的用户工作台用有限额度完成一次真实视频创建、轮询到终态、成片落盘与播放，并核对只创建一个上游任务、轮询使用 `data.task_id`、积分只扣一次，以及明确失败时退款正确。
 - Agent Runtime 已完成 AgentRequestV1、Chat/Responses/Gemini/custom 规划协议、内部流式解析、幂等回退和安全 SSE；短剧“AI 整理”也通过共享运行时使用内部流式读取、请求取消和可靠完整响应回退，最终只向浏览器返回校验后的结构化结果。本地 TCP fixture 已覆盖 Chat/Responses/Gemini/custom 的 SSE/NDJSON 分片、模型目录、媒体创建/查询/结果代理、鉴权、计费幂等和 POST/DELETE 取消，Responses 代理已确认 `baseUrl=https://api.openai.com/v1` 与显式 `/v1/responses` 不会重复版本前缀，短剧分析也覆盖了兼容网关结果包装。登录态生产构建已完成统一 Agent、Canvas、短剧的桌面、390×844、430×932、浅深主题和页面刷新回归；Canvas 真实 Run 已确认使用 Chat Completions 流式规划，SSE 重连未重复创建任务或计费。仍需在真实运行中的任务上人工验收暂停/恢复和上游失败重试，并核对正式渠道的退款、流式首字节和上游响应质量。
 - 统一创作、Canvas、短剧 Agent 的系统身份，以及提示词优化、创作质检和 GitHub Skill 导入的内部模型提示词，已统一读取后台“站点资料 → 网站标题”；空标题仍回退 `VOZEB PRO`，历史消息、开源项目名称、备份标识和数据库前缀不会被重写。专项 5 个测试文件、70 项测试与 TypeScript 检查已通过；仍需在已配置真实默认文本模型的环境修改网站标题后，分别验证新建普通问候、Canvas/短剧 Agent、提示词优化、自动复盘和 Skill 导入均使用新名称，旧会话内容保持不变。

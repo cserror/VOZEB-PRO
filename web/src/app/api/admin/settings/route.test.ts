@@ -16,6 +16,8 @@ vi.mock("@/lib/server/audit-log-store", () => ({ auditActorFromRequest: vi.fn(()
 
 import { GET, PATCH } from "./route";
 import { DEFAULT_SITE_SETTINGS } from "@/lib/auth/store";
+import { applyChannelProtocol, normalizeStrictProtocolModelConfig } from "@/lib/channel-protocol-registry";
+import { normalizeSystemChannelAdvancedConfig } from "@/lib/auth/store-normalizers-channel";
 
 const savedSettings = {
     systemChannels: [{ id: "one", name: "主渠道", baseUrl: "https://api.example.com/v1", apiKey: "saved-secret", webhookSecret: "0123456789abcdef0123456789abcdef", apiFormat: "openai", models: ["vendor/writer"], enabled: true }],
@@ -48,6 +50,33 @@ describe("admin settings model routing", () => {
             }),
         );
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.settings.update", metadata: { fields: expect.arrayContaining(["systemChannels", "logicalModels", "defaultModels"]) } }));
+    });
+
+    it("keeps New API JSON URL templates through save, fresh read, model sync and another save", async () => {
+        const template = '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}';
+        const channel = applyChannelProtocol({ ...savedSettings.systemChannels[0], apiFormat: "openai", models: ["seedance-2.0-480p", "seedance-2.0-720p"] }, "newapi");
+        // Simulate the URL configuration installed before the protocol preset fix.
+        for (const config of Object.values(channel.advancedConfig!.modelConfigs!)) config.requestTemplate = template;
+        channel.advancedConfig!.operationConfigs!.video!.requestTemplate = template;
+        let persisted = { ...savedSettings, systemChannels: [channel] };
+        mocks.getFreshAuthSettings.mockImplementation(async () => structuredClone(persisted));
+        mocks.setAuthSettings.mockImplementation(async (patch) => {
+            persisted = { ...persisted, ...patch };
+            return structuredClone(persisted);
+        });
+        for (let round = 0; round < 2; round += 1) {
+            const saved = await PATCH(request({ systemChannels: persisted.systemChannels }));
+            expect(saved.status, await saved.clone().text()).toBe(200);
+            const loaded = (await (await GET()).json()).settings.systemChannels[0];
+            const advanced = normalizeSystemChannelAdvancedConfig(loaded.advancedConfig)!;
+            for (const [model, config] of Object.entries(advanced.modelConfigs!)) {
+                expect(config.requestTemplate).toBe(template);
+                advanced.modelConfigs![model] = normalizeStrictProtocolModelConfig(config, advanced.protocol, model);
+                expect(advanced.modelConfigs![model].requestTemplate).toBe(template);
+            }
+            expect(advanced.operationConfigs!.video!.requestTemplate).toBe(template);
+            persisted.systemChannels = [{ ...loaded, advancedConfig: advanced }];
+        }
     });
 
     it("deletes a channel together with stale logical bindings and defaults", async () => {

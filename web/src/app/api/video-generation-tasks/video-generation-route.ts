@@ -312,7 +312,7 @@ export async function createUpstream(
         images: requestImages,
         videos,
         audios,
-        image: requestImage,
+        image: channel.advancedConfig?.protocol === "newapi" ? firstFrameUrl || requestImage : requestImage,
         video: videos[0] || "",
         audio: audios[0] || "",
         references,

@@ -217,7 +217,14 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
         authMode: "bearer",
         modelCatalogPaths: ["/v1/models"],
         capabilities: ["text", "image", "video", "audio"],
-        operations: openAiOperations,
+        operations: {
+            ...openAiOperations,
+            video: {
+                ...openAiOperations.video!,
+                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}',
+                referenceRule: "参考图或首帧使用 JSON input_reference 字符串字段，必须是上游可访问的公网 URL，不上传文件。",
+            },
+        },
         strict: true,
     },
     {
