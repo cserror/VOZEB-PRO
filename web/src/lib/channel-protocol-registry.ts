@@ -221,8 +221,11 @@ export const registeredChannelProtocolDefinitions: ChannelProtocolDefinition[] =
             ...openAiOperations,
             video: {
                 ...openAiOperations.video!,
-                requestTemplate: '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}',
-                referenceRule: "参考图或首帧使用 JSON input_reference 字符串字段，必须是上游可访问的公网 URL，不上传文件。",
+                requestTemplate:
+                    '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","image_url":"{{first_frame}}","reference_image_urls":"{{images}}","reference_video_urls":"{{videos}}","reference_audio_urls":"{{audios}}","generate_audio":"{{generate_audio}}"}',
+                referenceRule: "普通参考图、视频和音频按原顺序使用 reference_image_urls、reference_video_urls、reference_audio_urls 数组；显式首帧单独使用 image_url。媒体必须是上游可访问的公网 URL，不上传文件。",
+                supportsReferenceVideo: true,
+                supportsReferenceAudio: true,
             },
         },
         strict: true,

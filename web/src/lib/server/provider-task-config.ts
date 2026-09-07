@@ -51,7 +51,7 @@ function isUnsignedReferenceAssetUrl(value: string) {
     return isProviderMediaAssetUrl(value) && !hasProviderReadSignatureShape(value);
 }
 
-function renderProviderRequest(template: string, values: TemplateValues, align?: (payload: Record<string, unknown>, values: TemplateValues) => Record<string, unknown>) {
+function renderProviderRequest(template: string, values: TemplateValues, align?: (payload: Record<string, unknown>, values: TemplateValues, template: Record<string, unknown>) => Record<string, unknown>) {
     let parsed: unknown;
     try {
         parsed = JSON.parse(template);
@@ -60,7 +60,7 @@ function renderProviderRequest(template: string, values: TemplateValues, align?:
     }
     const rendered = renderTemplateValue(parsed, values);
     if (!rendered || typeof rendered !== "object" || Array.isArray(rendered)) throw new Error("高级请求模板必须是 JSON 对象");
-    const normalized = align ? align(rendered as Record<string, unknown>, values) : rendered;
+    const normalized = align ? align(rendered as Record<string, unknown>, values, parsed as Record<string, unknown>) : rendered;
     return pruneEmptyReferenceFields(normalized) as Record<string, unknown>;
 }
 
@@ -153,7 +153,7 @@ function renderTemplateValue(value: unknown, values: TemplateValues): unknown {
     return value.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key: string) => String(values[key] ?? match));
 }
 
-function alignVideoProviderFields(payload: Record<string, unknown>, values: TemplateValues) {
+function alignVideoProviderFields(payload: Record<string, unknown>, values: TemplateValues, template: Record<string, unknown>) {
     const next = { ...payload };
     for (const [key, current] of Object.entries(next)) {
         const normalizedKey = normalizeFieldKey(key);
@@ -164,6 +164,10 @@ function alignVideoProviderFields(payload: Record<string, unknown>, values: Temp
             continue;
         }
         const referenceValueKey = VIDEO_REFERENCE_VALUE_KEYS[normalizedKey];
+        // Explicit variables retain their role even when their value is empty.
+        const original = template[key];
+        const variable = typeof original === "string" ? original.match(/^\{\{\s*([\w.]+)\s*\}\}$/)?.[1] : undefined;
+        if (variable && Object.prototype.hasOwnProperty.call(values, variable)) continue;
         if (referenceValueKey && shouldAlignReferenceTemplateValue(current)) next[key] = values[referenceValueKey];
     }
     return next;
@@ -293,6 +297,7 @@ const REFERENCE_FIELD_KEYS = new Set([
     "references",
     "referenceimage",
     "referenceimages",
+    "referenceimageurls",
     "firstframeurl",
     "firstframeimage",
     "firstimage",
@@ -305,12 +310,14 @@ const REFERENCE_FIELD_KEYS = new Set([
     "inputvideos",
     "referencevideo",
     "referencevideos",
+    "referencevideourls",
     "audio",
     "audios",
     "inputaudio",
     "inputaudios",
     "referenceaudio",
     "referenceaudios",
+    "referenceaudiourls",
 ]);
 const REFERENCE_VALUE_KEYS = new Set(["url", "uri", "src", "data", "base64", "b64json", "id", "assetid", "imageurl", "videourl", "audiourl"]);
 const REFERENCE_METADATA_KEYS = new Set(["type", "kind", "role", "mimetype", "name"]);
@@ -344,14 +351,17 @@ const VIDEO_REFERENCE_VALUE_KEYS: Record<string, string> = {
     inputreference: "images",
     inputreferences: "images",
     referenceimages: "images",
+    referenceimageurls: "images",
     video: "video",
     referencevideo: "video",
     videos: "videos",
     referencevideos: "videos",
+    referencevideourls: "videos",
     audio: "audio",
     referenceaudio: "audio",
     audios: "audios",
     referenceaudios: "audios",
+    referenceaudiourls: "audios",
     refassets: "references",
     reference: "references",
     references: "references",

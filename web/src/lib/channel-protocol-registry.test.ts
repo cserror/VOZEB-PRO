@@ -62,7 +62,19 @@ describe("channel protocol registry", () => {
         expect(channelProtocolDefinition("sub2api").operations.image).toMatchObject({ createPath: "/images/generations", editPath: "/images/generations", requestTemplate: expect.stringContaining("image_urls") });
         const newApi = channelProtocolDefinition("newapi").operations;
         for (const capability of ["text", "image", "audio"] as const) expect(newApi[capability]).toEqual(channelProtocolDefinition("openai").operations[capability]);
-        expect(JSON.parse(newApi.video!.requestTemplate!)).toEqual({ model: "{{model}}", prompt: "{{prompt}}", seconds: "{{seconds}}", size: "{{size}}", input_reference: "{{image}}" });
+        expect(JSON.parse(newApi.video!.requestTemplate!)).toEqual({
+            model: "{{model}}",
+            prompt: "{{prompt}}",
+            seconds: "{{seconds}}",
+            aspect_ratio: "{{aspect_ratio}}",
+            resolution: "{{resolution}}",
+            image_url: "{{first_frame}}",
+            reference_image_urls: "{{images}}",
+            reference_video_urls: "{{videos}}",
+            reference_audio_urls: "{{audios}}",
+            generate_audio: "{{generate_audio}}",
+        });
+        expect(newApi.video).toMatchObject({ supportsReferenceImage: true, supportsReferenceVideo: true, supportsReferenceAudio: true });
         expect(channelProtocolDefinition("seedance").operations.video).toMatchObject({ createPath: "/contents/generations/tasks", queryPath: "/contents/generations/tasks/:task_id", resultField: "content.video_url" });
         expect(channelProtocolDefinition("volcengine-video").operations.video).toEqual(channelProtocolDefinition("seedance").operations.video);
         expect(channelProtocolDefinition("stable-diffusion").operations.image).toMatchObject({ createPath: "/sdapi/v1/txt2img", editPath: "/sdapi/v1/img2img", resultField: "images[0]" });

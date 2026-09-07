@@ -40,12 +40,80 @@ describe("active media protocols over TCP fixtures", () => {
         for (const role of ["reference", "first_frame"] as const) {
             const config = videoConfig("newapi", origin, model);
             const referenceUrl = `${origin}/media/fixture.png`;
-            await createUpstream("user-live", "", "", config, "animate", { videoSeconds: 5, size: "16:9" }, [{ type: "image", role, url: referenceUrl }], MULTIPLIERS, `${model}-${role}`);
+            const quality = model.endsWith("480p") ? "480" : "720";
+            await createUpstream("user-live", "", "", config, "animate", { videoSeconds: 5, size: "16:9", vquality: quality }, [{ type: "image", role, url: referenceUrl }], MULTIPLIERS, `${model}-${role}`);
             const request = fixture.requests.filter((item) => item.method === "POST").at(-1)!;
             expect(request.contentType).toContain("application/json");
-            expect(JSON.parse(request.body.toString("utf8"))).toEqual({ model, prompt: "animate", seconds: 5, size: "16:9", input_reference: referenceUrl });
+            expect(JSON.parse(request.body.toString("utf8"))).toEqual({
+                model,
+                prompt: "animate",
+                seconds: 5,
+                aspect_ratio: "16:9",
+                resolution: `${quality}p`,
+                generate_audio: true,
+                ...(role === "first_frame" ? { image_url: referenceUrl } : { reference_image_urls: [referenceUrl] }),
+            });
         }
         expect(fixture.requests.some((item) => item.path === "/media/fixture.png")).toBe(false);
+    });
+
+    it.each([0, 1, 2, 8, 16])("transmits all %i New API image references in order without an implicit first frame", async (count) => {
+        const model = "seedance-2.0-720p";
+        const urls = Array.from({ length: count }, (_, index) => `${origin}/media/reference-${index}.png`);
+        await createUpstream(
+            "user-live",
+            "",
+            "",
+            videoConfig("newapi", origin, model),
+            "animate",
+            { videoSeconds: 5, size: "16:9", vquality: "720", videoGenerateAudio: false },
+            urls.map((url) => ({ type: "image" as const, role: "reference" as const, url })),
+            MULTIPLIERS,
+            `many-images-${count}`,
+        );
+        const requests = fixture.requests.filter((item) => item.method === "POST");
+        expect(requests).toHaveLength(1);
+        expect(JSON.parse(requests[0].body.toString("utf8"))).toEqual({ model, prompt: "animate", seconds: 5, aspect_ratio: "16:9", resolution: "720p", generate_audio: false, ...(count ? { reference_image_urls: urls } : {}) });
+    });
+
+    it("separates the New API first frame and preserves ordered image, video and audio arrays", async () => {
+        const model = "seedance-2.0-480p";
+        const images = Array.from({ length: 6 }, (_, index) => `${origin}/media/reference-${index}.png`);
+        const videos = [`${origin}/media/one.mp4`, `${origin}/media/two.mp4`];
+        const audios = [`${origin}/media/one.mp3`, `${origin}/media/two.mp3`];
+        const firstFrame = `${origin}/media/first.png`;
+        const config = videoConfig("newapi", origin, model);
+        await createUpstream(
+            "user-live",
+            "",
+            "",
+            config,
+            "animate",
+            { videoSeconds: 8, size: "9:16", vquality: "480", videoGenerateAudio: false },
+            [
+                { type: "video", url: videos[0] },
+                ...images.map((url) => ({ type: "image" as const, url })),
+                { type: "audio", url: audios[0] },
+                { type: "image", role: "first_frame", url: firstFrame },
+                { type: "video", url: videos[1] },
+                { type: "audio", url: audios[1] },
+            ],
+            MULTIPLIERS,
+            "multimodal",
+        );
+        const request = fixture.requests.find((item) => item.method === "POST")!;
+        expect(JSON.parse(request.body.toString("utf8"))).toEqual({
+            model,
+            prompt: "animate",
+            seconds: 8,
+            aspect_ratio: "9:16",
+            resolution: "480p",
+            generate_audio: false,
+            image_url: firstFrame,
+            reference_image_urls: images,
+            reference_video_urls: videos,
+            reference_audio_urls: audios,
+        });
     });
 
     it.each(STRICT_IMAGE_PROTOCOLS)("completes $id image creation with its registered request shape", async (definition) => {

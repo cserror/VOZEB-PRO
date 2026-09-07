@@ -15,9 +15,28 @@ description: 当前接口响应事实与管理员敏感配置契约
 
 ## New API 视频请求模板
 
-本项目 `newapi` 视频预设使用 JSON URL 契约：`{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}`。普通参考图或显式首帧以供上游访问的 URL 字符串传入 `input_reference`，不下载后再作为 multipart 文件上传；时长变量仍按现有渲染器保留数值类型。此契约用于本项目接入的 URL 型视频聚合插件，不代表所有 New API 部署均支持此方式。普通 `openai` 视频预设仍保留 multipart，New API 的文本、图片和音频预设不变。
+本项目 `newapi` 视频预设采用已确认的视频聚合插件 JSON URL 契约，不代表所有 New API 部署均支持此方式：
 
-后台严格协议保存校验与模型同步共用该注册表。代码更新不会自动重写已保存的渠道：上线时须备份后显式更新目标渠道的视频 `modelConfigs` 和 `operationConfigs.video` 请求模板，并刷新旧后台页面，再验证保存、刷新和同步后模板仍为 JSON URL。历史任务快照、失败任务和账务不自动修改。
+```json
+{
+  "model": "{{model}}",
+  "prompt": "{{prompt}}",
+  "seconds": "{{seconds}}",
+  "aspect_ratio": "{{aspect_ratio}}",
+  "resolution": "{{resolution}}",
+  "image_url": "{{first_frame}}",
+  "reference_image_urls": "{{images}}",
+  "reference_video_urls": "{{videos}}",
+  "reference_audio_urls": "{{audios}}",
+  "generate_audio": "{{generate_audio}}"
+}
+```
+
+普通参考图片、视频和音频分别以真正的 URL 数组传入三个 `reference_*_urls` 字段，保留各类型内的原顺序，不固定为一张或两张，也不在模板层截断；数量限制继续使用后台模型能力档案。`image_url` 仅传显式首帧，首帧不混入普通参考图数组；未指定首帧时省略该字段，不自动补入第一张普通图。此契约没有尾帧字段，继续拒绝不支持的尾帧输入。空参考数组省略，时长保留数值类型，`generate_audio` 保留布尔类型（含 `false`）。媒体使用上游可访问的 URL，不下载后再作为 multipart 文件上传。
+
+视频预设同时声明参考图片、视频和音频能力。普通 `openai` 视频预设仍保留 multipart，New API 的文本、图片和音频预设不变。视频模板中的显式参考变量优先于字段名推断，即使变量为空也不能被其他角色的素材替换；示例 URL 的原有自动填充仍保留。
+
+后台严格协议保存校验与模型同步共用该注册表。代码更新不会自动重写已保存的渠道：上线时须备份后显式更新目标渠道的视频 `modelConfigs` 和 `operationConfigs.video` 请求模板、参考能力声明与说明，保留后台数量限制和其他模型设置；刷新旧后台页面，再验证保存、刷新和同步后仍为多模态 URL 模板。历史任务快照、失败任务和账务不自动修改；已经生成的视频不会因模板更新而改变。
 
 ## 视频任务结果获取
 

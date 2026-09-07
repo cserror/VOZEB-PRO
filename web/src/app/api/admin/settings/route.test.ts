@@ -52,10 +52,11 @@ describe("admin settings model routing", () => {
         expect(mocks.safeRecordAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "admin.settings.update", metadata: { fields: expect.arrayContaining(["systemChannels", "logicalModels", "defaultModels"]) } }));
     });
 
-    it("keeps New API JSON URL templates through save, fresh read, model sync and another save", async () => {
-        const template = '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","size":"{{size}}","input_reference":"{{image}}"}';
+    it("keeps New API multimodal templates through save, fresh read, model sync and another save", async () => {
+        const template =
+            '{"model":"{{model}}","prompt":"{{prompt}}","seconds":"{{seconds}}","aspect_ratio":"{{aspect_ratio}}","resolution":"{{resolution}}","image_url":"{{first_frame}}","reference_image_urls":"{{images}}","reference_video_urls":"{{videos}}","reference_audio_urls":"{{audios}}","generate_audio":"{{generate_audio}}"}';
         const channel = applyChannelProtocol({ ...savedSettings.systemChannels[0], apiFormat: "openai", models: ["seedance-2.0-480p", "seedance-2.0-720p"] }, "newapi");
-        // Simulate the URL configuration installed before the protocol preset fix.
+        // Submit the plugin contract independently of the installed preset.
         for (const config of Object.values(channel.advancedConfig!.modelConfigs!)) config.requestTemplate = template;
         channel.advancedConfig!.operationConfigs!.video!.requestTemplate = template;
         let persisted = { ...savedSettings, systemChannels: [channel] };
@@ -71,6 +72,7 @@ describe("admin settings model routing", () => {
             const advanced = normalizeSystemChannelAdvancedConfig(loaded.advancedConfig)!;
             for (const [model, config] of Object.entries(advanced.modelConfigs!)) {
                 expect(config.requestTemplate).toBe(template);
+                expect(config).toMatchObject({ supportsReferenceImage: true, supportsReferenceVideo: true, supportsReferenceAudio: true });
                 advanced.modelConfigs![model] = normalizeStrictProtocolModelConfig(config, advanced.protocol, model);
                 expect(advanced.modelConfigs![model].requestTemplate).toBe(template);
             }
