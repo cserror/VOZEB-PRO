@@ -1,0 +1,9 @@
+# Apply LAST, after the existing production override. Keep its env, volumes,
+# ports, networks and resource limits. Operations must supply image@sha256.
+services:
+  app:
+    build: !reset null
+    image: ${VOZEB_PRO_IMAGE:?Supply the reviewed immutable image reference}
+  generation-worker:
+    build: !reset null
+    image: ${VOZEB_PRO_IMAGE:?Supply the same reviewed immutable image reference}

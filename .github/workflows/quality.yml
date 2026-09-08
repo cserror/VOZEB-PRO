@@ -4,9 +4,13 @@ run-name: Web 与文档质量检查 · ${{ github.ref_name }}
 on:
   push:
     branches: ["main"]
-    tags: ["v*", "VOZEB-PRO-v*"]
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -14,6 +18,7 @@ permissions:
 jobs:
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgres:16.6-alpine
@@ -34,6 +39,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
@@ -46,6 +54,10 @@ jobs:
           cache-dependency-path: web/pnpm-lock.yaml
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Release tooling tests
+        run: node --test ../scripts/release/*.test.mjs
+      - name: Disposable test encryption key
+        run: node -e "console.log('VOZEB_PRO_ENCRYPTION_KEY=' + require('node:crypto').randomBytes(32).toString('hex'))" >> "$GITHUB_ENV"
       - name: Dependency audit
         run: pnpm audit --audit-level moderate
       - name: ESLint
@@ -76,7 +88,6 @@ jobs:
         env:
           VOZEB_PRO_DATABASE_PROVIDER: postgres
           DATABASE_URL: postgres://vozeb:vozeb-e2e-password@127.0.0.1:5432/vozeb_pro_e2e
-          VOZEB_PRO_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           VOZEB_PRO_RUN_POSTGRES_INTEGRATION: "1"
           RUN_WORK_COMMUNITY_POSTGRES_INTEGRATION: "1"
       - name: Upload browser artifacts
@@ -92,12 +103,16 @@ jobs:
 
   docs:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: docs
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
         with:
@@ -119,6 +134,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       security-events: write
@@ -127,6 +143,8 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          ref: ${{ inputs.source_sha || github.sha }}
+          persist-credentials: false
       - name: Scan committed secrets
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:

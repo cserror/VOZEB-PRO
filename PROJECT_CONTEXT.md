@@ -2,7 +2,14 @@
 
 本文件是 VOZEB-PRO 二开工作区的当前事实入口，不是产品规格、开发规则或历史流水。长期规则由 `AGENTS.override.md` 管理，功能、配置、数据库和部署细节以现有代码、测试、README 与 `docs/content/docs/` 为准。
 
-## 当前状态
+## 当前构建迁移候选
+
+- 2026-09-08：本隔离工作树基于 `61a5c2f6bee5fa6c4e66f662d143ea01bbab2e65` 准备 GitHub 构建改造，仅修改构建、验证、部署覆盖与操作说明；未新增业务能力或迁移，未提交、推送、发布镜像或部署。
+- 自有 GitHub main 已同步到该业务基线；旧工作流虽启用且收到 PushEvent，仍无 CI run，原因未确认，不能视为通过。相关真实运行与后续费用/权限门继续由运维计划记录。
+- 候选采用手动单平台成品发布、独立临时数据库及无外网镜像测试、Web/Worker 同镜像、registry/config 身份关联和 pull-only Compose 覆盖。入口为 `.github/workflows/README.md`；跨项目契约及阶段记录见 `/Users/cserror/codex/server-admin/GITHUB_BUILD_RELEASE_PLAN.md`。
+- 本地发布工具、工作流契约及 Compose 合并检查已执行；真实 Linux 镜像构建/成品测试、Actions job 名称与报告字段映射、GHCR 读取及生产验收尚未执行。部署方式尚未迁移，以下业务与运行描述为该基线的历史记录，不代表本轮新验收。
+
+## 业务基线记录
 
 - 项目内部名称：暂用 `Vozeb` / `VOZEB-PRO`，正式品牌名尚未确定。
 - 当前阶段：运维台账记录法国封闭测试环境已部署 `dfe41b8`（New API 单图 JSON URL 与首帧映射）；本地多模态参考 URL 模板修复已通过局部验证，本次按用户要求提交并准备正式上线交接，尚未部署。精确提交和源码包由 `server-admin/inbox/pending/20260907-2100-vozeb-pro-newapi-multimodal.md` 记录，生产事实仍由运维台账拥有。

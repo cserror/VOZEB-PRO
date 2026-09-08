@@ -8,23 +8,51 @@ import { parseDocument } from "yaml";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
 describe("release workflow contract", () => {
-    it.each(["docker-image.yml", "docs-docker-image.yml"])("gates %s behind quality and signs immutable digests", (file) => {
-        const source = workflow(file);
+    it("only publishes an explicitly selected source after quality and final-image verification", () => {
+        const source = workflow("docker-image.yml");
         const parsed = parseDocument(source);
-
         expect(parsed.errors).toEqual([]);
-        const jobs = parsed.toJS().jobs;
-        expect(source).not.toContain('branches: ["main"]');
-        expect(source).toContain("quality:");
-        expect(jobs.build.needs).toEqual(["quality", "security", "meta"]);
-        expect(source).toContain("type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v')");
-        expect(source).toContain("anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610");
-        expect(source).toContain("cosign sign --yes");
-        expect(source).toContain("cosign attest --yes");
-        expect(source).toContain("awk '/^Digest:/ && digest == \"\" { digest = $2 } END { print digest }'");
-        expect(source).not.toContain("awk '/^Digest:/ { print $2; exit }'");
-        expect(source).toContain("version: 11.9.0");
+        const document = parsed.toJS();
+        const { jobs } = document;
+        expect(Object.keys(document.on)).toEqual(["workflow_dispatch"]);
+        expect(document.on.workflow_dispatch.inputs.source_sha.required).toBe(true);
+        expect(jobs.validate.if).toContain("github.repository == 'cserror/VOZEB-PRO'");
+        expect(jobs.validate.if).toContain("github.ref == 'refs/heads/main'");
+        expect(jobs.validate.steps[1].run).toContain('git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"');
+        expect(jobs.quality.uses).toBe("./.github/workflows/quality.yml");
+        expect(jobs.publish.needs).toEqual(["validate", "quality"]);
+        expect(jobs.manifest.needs).toEqual(["validate", "quality", "publish"]);
+        const steps = jobs.publish.steps;
+        const build = steps.find((step) => step.uses?.startsWith("docker/build-push-action@"));
+        expect(build.with).toMatchObject({ platforms: "linux/amd64", load: true, push: false });
+        const smokeIndex = steps.findIndex((step) => step.name === "Verify isolated final image");
+        const loginIndex = steps.findIndex((step) => step.uses?.startsWith("docker/login-action@"));
+        const pushIndex = steps.findIndex((step) => step.name === "Publish the already tested image");
+        expect(smokeIndex).toBeGreaterThan(-1);
+        expect(loginIndex).toBeGreaterThan(smokeIndex);
+        expect(pushIndex).toBeGreaterThan(loginIndex);
+        expect(jobs.publish.env.PUBLISHED_REFERENCE).toMatch(/^ghcr\.io\/cserror\/vozeb-pro:sha-/);
+        expect(source).not.toContain("ghcr.io/csyqlz/");
+        expect(source).not.toContain("self-hosted");
+        expect(source).not.toContain("cosign");
+        for (const [name, job] of Object.entries(jobs)) {
+            if (name !== "publish") expect(job.permissions?.packages).not.toBe("write");
+            if (job["runs-on"]) expect(job["timeout-minutes"]).toBeLessThanOrEqual(30);
+            for (const step of job.steps || []) {
+                if (step.uses?.startsWith("actions/checkout@")) expect(step.with["persist-credentials"]).toBe(false);
+            }
+        }
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
+    });
+
+    it("retires docs image publication without leaving a tag or package-write trigger", () => {
+        const parsed = parseDocument(workflow("docs-docker-image.yml"));
+        expect(parsed.errors).toEqual([]);
+        const document = parsed.toJS();
+        expect(Object.keys(document.on)).toEqual(["workflow_dispatch"]);
+        expect(document.permissions).toEqual({ contents: "read" });
+        expect(Object.keys(document.jobs)).toEqual(["retired"]);
+        expect(document.jobs.retired.steps[0].run).toContain("exit 1");
     });
 
     it("runs lint, tests, type-check, build and browser E2E in the main quality workflow", () => {
@@ -39,14 +67,11 @@ describe("release workflow contract", () => {
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
     });
 
-    it.each([
-        ["quality.yml", "web"],
-        ["docker-image.yml", "quality"],
-    ])("serializes shared PostgreSQL integration tests in %s", (file, job) => {
-        const document = parseDocument(workflow(file));
+    it("serializes shared PostgreSQL integration tests in reusable quality", () => {
+        const document = parseDocument(workflow("quality.yml"));
         expect(document.errors).toEqual([]);
-
-        const step = document.toJS().jobs[job].steps.find((item) => item.name === "PostgreSQL integration tests");
+        expect(document.toJS().on.workflow_call.inputs.source_sha.required).toBe(true);
+        const step = document.toJS().jobs.web.steps.find((item) => item.name === "PostgreSQL integration tests");
         expect(step?.run).toContain("pnpm exec vitest run --no-file-parallelism");
     });
 
@@ -57,6 +82,8 @@ describe("release workflow contract", () => {
 
         expect(rootPackage.packageManager).toBe("pnpm@11.9.0");
         expect(appDockerfile).toContain("ARG PNPM_VERSION=11.9.0");
+        expect(appDockerfile).toContain("ARG NODE_BASE=node:22-bookworm-slim");
+        expect(appDockerfile.match(/FROM \$\{NODE_BASE\}/g)).toHaveLength(2);
         expect(docsDockerfile).toContain("pnpm@11.9.0");
     });
 
