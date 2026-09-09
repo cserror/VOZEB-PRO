@@ -128,10 +128,11 @@ export function createReleaseManifest(input) {
       ],
     },
     impact: {
-      migration_required: false,
+      migration_required: null,
+      assessment_status: "pending_ops_review",
       configuration_names: ["VOZEB_PRO_IMAGE"],
       services: ["app", "generation-worker"],
-      data: "Build-only migration candidate; no business schema change. Production review must compare the approved baseline.",
+      data: "Not assessed by CI. Handoff must document migration, configuration and data changes against the deployed version; ops review must confirm them before deployment. Listed services and configuration names describe the image switch only, not all possible business changes.",
     },
   };
 }

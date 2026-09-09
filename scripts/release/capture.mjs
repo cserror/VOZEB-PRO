@@ -47,10 +47,11 @@ for (const [root, commit, purpose, paths] of [
   [
     "source",
     sourceSha,
-    "source recipe and schema",
+    "source recipe, base deployment configuration and schema",
     [
       "Dockerfile",
       ".dockerignore",
+      "docker-compose.yml",
       "VERSION",
       "web/package.json",
       "web/pnpm-lock.yaml",

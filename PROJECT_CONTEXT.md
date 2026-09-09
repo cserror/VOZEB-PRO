@@ -2,13 +2,14 @@
 
 本文件是 VOZEB-PRO 二开工作区的当前事实入口，不是产品规格、开发规则或历史流水。长期规则由 `AGENTS.override.md` 管理，功能、配置、数据库和部署细节以现有代码、测试、README 与 `docs/content/docs/` 为准。
 
-## 当前构建迁移候选
+## 当前发布协作状态
 
-- 2026-09-09：本隔离工作树已按确认提交并推送 `086936ece9a2865f4df7b4dd624f576fc459a777`，父提交为依赖修补 `2b671c325e46c5f71375207acb10638428325b62`，业务来源仍为 `61a5c2f6bee5fa6c4e66f662d143ea01bbab2e65`。推送后 API 已核远端一致；后续操作仍需重新检查漂移。
-- 精简流程默认只做密钥扫描、Docker 内类型/编译和成品隔离验证，全量 Quality 改为手动选择。Push Quality `34294065348` 成功；仅一次手动镜像 run `34294107129`，Docker 构建通过，但 smoke 读取测试容器端口映射时异常，整体失败，未上传 GHCR 或部署。此前未提交的 21 文件格式调整、E2E 修补和未成功的手机布局实验仍保留，未纳入这 7 文件提交。
-- 候选采用手动单平台成品发布、独立临时数据库及无外网镜像测试、Web/Worker 同镜像、registry/config 身份关联和 pull-only Compose 覆盖。入口为 `.github/workflows/README.md`；跨项目契约及阶段记录见 `/Users/cserror/codex/server-admin/GITHUB_BUILD_RELEASE_PLAN.md`。
-- 端口失败已定位为 `--internal` 网络与宿主机发布端口访问方式冲突。本地修复改为通过 `docker exec` 在应用容器内请求 `127.0.0.1:3000`，保留隔离网络、禁止跳转、超时和原有验收断言；未改业务代码。29 项发布工具测试通过，包含真实内部网络 HTTP、Cookie/JSON/二进制传输及跳转拒绝；临时资源已清理。
-- 修复尚未提交/推送或云测，当前真实 VOZEB 镜像的完整安装/Web/Worker 验收、GHCR 上传和生产验收仍未通过。本轮没有本地应用构建或手机测试。下一步仅确认这 6 个脚本/测试/说明文件提交与一次云运行，旧业务实验仍排除；结果证据由运维计划引用。部署方式尚未迁移，以下业务与运行描述为历史记录，不代表本轮新验收。
+- 2026-09-09 用户确认后，本目录 `main` 已从 `61a5c2f6bee5fa6c4e66f662d143ea01bbab2e65` 快进到 `8273e7d75de0dfaaea00e6a0c622b8911a634cc8`，与本地 `origin/main` 一致；未 fetch，不把跟踪引用当作 GitHub 实时状态。没有新增 commit、stash、push、tag 或生产操作。
+- 已将隔离目录中 7 个已确认的后续发布流程文件整合到本目录，逐文件 hash 一致；原有 AGENTS.md、AGENTS.override.md、web/next-env.d.ts 内容保持，PROJECT_CONTEXT 既有业务记录保留并更新本节。页面、格式和 E2E 实验未带入。以后从本目录开发、测试和准备上线提交，操作说明见 `.github/workflows/README.md`。
+- 本机依赖已按新锁文件离线更新，未下载包、未运行安装脚本、未改写锁文件。更新前 Tiptap 3.30.0 的属性安全测试失败；更新为 3.30.4 后通过。在本目录实际完成 40 项发布/依赖回归和 TypeScript 检查；包含真实内部 Docker 网络 HTTP 验证，不含完整应用构建、页面验收、GitHub 云运行或生产验收。
+- 后续 7 文件流程优化仍未提交/推送，下一道门为确认指定发布范围后提交、推送及云验证，成功后正式交接；不把本地通过当成云端已更新。运行与回滚事实仍以 `/Users/cserror/codex/server-admin/projects/vozeb-pro.md` 为准。
+- 用户要求后续清理测试隔离文件。本轮临时 Git 仓库、测试容器和网络已清理；原隔离目录 `/Users/cserror/codex/server-admin/.work/vozeb-cloud-build-20260908` 仍有未提交页面/E2E 等实验与证据，须先核对并保留独有内容再清理，不能整目录直接删除。整合备份和校验记录位于 `output/release-dev-integration-2026-09-09T045222204Z/`，属于恢复证据，不作临时垃圾删除。
+- 下方业务与运行验收是历史记录，不覆盖本节；专项当前进度由 `/Users/cserror/codex/server-admin/GITHUB_BUILD_RELEASE_PLAN.md` 拥有。
 
 ## 业务基线记录
 
@@ -45,8 +46,9 @@
 - 当前上游业务代码基线 commit：`04b32d31ca00272e3866c85e9a8329036c63af72`；本 Fork 在该基线上包含二开治理文档和首个业务二开切片，当前提交以 Git 为准。
 - `origin`：`https://github.com/cserror/VOZEB-PRO.git`，我们的公开 Fork。
 - `upstream`：`https://github.com/csyqlz/VOZEB-PRO.git`，官方仓库。
-- 本地远程跟踪引用 `origin/main` 为 `13ee2308ef8ce10b5d029fe99b68b78cc53c49a2`；本轮未 fetch，不把该引用当作 GitHub 实时状态。上游业务基线仍沿用上述记录。
-- 运维台账记录线上为 `dfe41b8d44a580fbbb22440ef0c4163bbdfa4137`；本轮多模态修复以包含本节的 Git 提交为交接锚点，精确 SHA 见交接单；本轮不 push、tag 或部署。
+- 2026-09-08 21:39 CST 更新：隔离构建候选 `a17a2bb7e963a15ade2d8c602942f1bc51754347` 已通过 Karing 推送并由 GitHub API 核对 main；Fork Actions 已获准启用，但运行记录仍为 0，未手动构建/发镜像/部署。本目录 main 仍为 `61a5c2f`，已有未提交改动保留，后续先核差异再整合；构建进度以 `/Users/cserror/codex/server-admin/GITHUB_BUILD_RELEASE_PLAN.md` 为准。下一条为此前同步快照。
+- 2026-09-08 20:15 CST，经用户确认，已通过 Karing 将 4 个现有提交推送至公开 Fork；GitHub API 与本地 `origin/main` 均核对为 `61a5c2f6bee5fa6c4e66f662d143ea01bbab2e65`。未提交文件未包含在推送中，未新增 commit/tag、发布镜像或部署；Quality 工作流为 active，但尚未观察到该候选的 CI run/check-suite，不能视为质量检查通过。构建迁移进度见 `/Users/cserror/codex/server-admin/GITHUB_BUILD_RELEASE_PLAN.md`；上游业务基线不变。
+- 2026-09-07 多模态修复交接时的历史快照：当时运维台账线上为 `dfe41b8d44a580fbbb22440ef0c4163bbdfa4137`，该次交接未 push、tag 或部署；后续 Git 同步结果见上一条，当前生产版本仍以运维台账及现场核验为准。
 - 当前许可证：AGPL-3.0。项目用于自运营，不做 OEM；未来闭源或其他商业分发必须以取得明确商业授权为前提，当前不能视为已经授权。
 
 ## 本地开发环境
@@ -85,8 +87,8 @@
 ## 已确认工作方式
 
 - 本地采用混合开发拓扑：Web 与 Worker 使用源码运行，PostgreSQL 使用 Docker，便于热更新和调试。
-- 服务器采用项目 Docker 部署材料，并在服务器从明确 commit 的脱敏源码包构建镜像；服务器镜像继续沿用 Dockerfile 的 Node.js 版本。
-- 发布链路：本地开发验证 -> commit -> 上线交接 -> 运维审查 -> 用户确认 -> commit 源码包 -> 服务器构建 -> 备份/迁移判断 -> 容器切换 -> 生产验收。
+- 服务器按运维台账使用固定 digest 的 GHCR 成品，不在生产编译 VOZEB；构建依赖与 Node.js 版本由 Dockerfile 和锁文件拥有。
+- 发布操作由 `.github/workflows/README.md` 和全局交接 Playbook 拥有；上游合并属于按需前置开发，上线提交可在明确授权后连续提交、推送、云构建和交接，生产操作另经审查确认。
 - 后台已经支持的站点名称、Logo、图标和运营参数优先在生产后台配置，不提前做重复的代码级品牌替换。
 - 生产数据库、密钥、管理员、媒体和后台配置与本地环境完全隔离。
 - 文档按事实 owner 管理，不再要求所有事项机械经过 `todo -> pending-test -> features`。自动化或浏览器证据充分的已实现变更可直接更新对应 owner；只有确实依赖人工、供应商、付费调用或生产验收的事项才进入 `pending-test.mdx`。
@@ -118,7 +120,7 @@
 - 上游原 `AGENTS.md` 超过 Codex 默认项目指导大小；本 Fork 使用精简 override，并按任务定向读取原文件相关章节。
 - 上游遗留的 `todo.mdx` 和 `pending-test.mdx` 内容较大，尚未逐项按当前代码、测试和运行证据重新分类；它们不能整体视为当前事实，也不能在未核对前直接清空。
 
-## 下一道门
+## 历史业务下一道门（2026-09-07，当前发布入口见顶部）
 
 1. 本次以明确本地 commit 和 `git archive` 源码包完成上线交接；该 commit 在明确执行 `git push origin main` 前不得视为远端已有能力。
 2. 运维窗口需按交接单核验法国封闭测试服务的实际版本和回滚点；后续拟更新 Web/Worker 镜像，并在单独确认的范围内备份、修改目标渠道的视频模型级及操作级模板、参考能力与说明，保留后台数量限制和其他模型设置。先核实网关插件支持新的公共参考字段。环境变量、Compose 拓扑、端口、域名、历史任务和账务不在修改范围。

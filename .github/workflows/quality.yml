@@ -1,5 +1,5 @@
 name: Quality
-run-name: Quality · full=${{ inputs.full_checks == true }} · ${{ github.ref_name }}
+run-name: Quality · full=${{ inputs.full_checks == true }} · ${{ inputs.source_sha || github.sha }}
 
 on:
   push:
@@ -7,6 +7,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      source_sha:
+        description: Full source commit from the selected branch or tag history
+        type: string
+        required: true
       full_checks:
         description: Run the full source quality suite, including mobile E2E
         type: boolean
@@ -25,6 +29,7 @@ permissions:
 
 jobs:
   web:
+    needs: security
     if: ${{ inputs.full_checks == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -49,7 +54,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: ${{ needs.security.outputs.source_sha }}
           persist-credentials: false
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
@@ -111,6 +116,7 @@ jobs:
           retention-days: 7
 
   docs:
+    needs: security
     if: ${{ inputs.full_checks == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -121,7 +127,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ inputs.source_sha || github.sha }}
+          ref: ${{ needs.security.outputs.source_sha }}
           persist-credentials: false
       - name: Setup pnpm
         uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5.0.0
@@ -145,6 +151,8 @@ jobs:
   security:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
     permissions:
       contents: read
       security-events: write
@@ -155,6 +163,19 @@ jobs:
           fetch-depth: 0
           ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
+      - name: Validate selected source
+        id: source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          git merge-base --is-ancestor "$SOURCE_SHA" "$EVENT_SHA"
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
       - name: Scan committed secrets
         uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
         env:

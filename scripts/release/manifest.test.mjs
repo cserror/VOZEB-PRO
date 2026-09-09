@@ -216,6 +216,15 @@ test("does not claim skipped full-quality jobs passed", () => {
   );
 });
 
+test("leaves release impact unassessed instead of claiming no business migrations", () => {
+  const manifest = createReleaseManifest(fixture());
+  assert.equal(manifest.impact.migration_required, null);
+  assert.equal(manifest.impact.assessment_status, "pending_ops_review");
+  assert.match(manifest.impact.data, /Not assessed by CI/);
+  assert.match(manifest.impact.data, /against the deployed version/);
+  assert.doesNotMatch(manifest.impact.data, /no business schema change/);
+});
+
 test("accepts a rebuild only with matching new image evidence", () => {
   const x = fixture();
   const replacement = `sha256:${"f".repeat(64)}`;

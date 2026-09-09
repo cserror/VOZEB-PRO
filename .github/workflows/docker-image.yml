@@ -35,20 +35,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]] || exit 1
           git cat-file -e "$SOURCE_SHA^{commit}"
           git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"
           git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
           git cat-file -e "$SOURCE_SHA:scripts/release/manifest.test.mjs"
-          # Includes the approved dependency repair; no later business edits are allowed.
-          BASELINE=2b671c325e46c5f71375207acb10638428325b62
-          git merge-base --is-ancestor "$BASELINE" "$SOURCE_SHA"
-          git diff --exit-code "$BASELINE" "$SOURCE_SHA" -- . \
-            ':(exclude)Dockerfile' ':(exclude).dockerignore' \
-            ':(exclude).github/workflows/*' ':(exclude)scripts/release/*' \
-            ':(exclude)deploy/docker-compose.image.yml' \
-            ':(exclude)web/scripts/release-workflow-contract.test.mjs' \
-            ':(exclude)PROJECT_CONTEXT.md'
           echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
 
   quality:

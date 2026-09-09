@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,7 +23,6 @@ describe("release workflow contract", () => {
         expect(jobs.validate.steps[1].run).toContain('git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"');
         expect(jobs.quality.uses).toBe("./.github/workflows/quality.yml");
         expect(jobs.quality.with.full_checks).toBe(false);
-        expect(jobs.validate.steps[1].run).toContain("BASELINE=2b671c325e46c5f71375207acb10638428325b62");
         expect(jobs.publish.needs).toEqual(["validate", "quality"]);
         expect(jobs.manifest.needs).toEqual(["validate", "quality", "publish"]);
         const steps = jobs.publish.steps;
@@ -47,6 +48,70 @@ describe("release workflow contract", () => {
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
     });
 
+    it("accepts later business commits on main but rejects invalid source ancestry", () => {
+        const directory = mkdtempSync(path.join(tmpdir(), "vozeb-release-history-"));
+        const git = (...args) => execFileSync("git", args, { cwd: directory, encoding: "utf8", timeout: 5000 }).trim();
+        try {
+            git("init", "-q", "-b", "main");
+            git("config", "user.name", "Release fixture");
+            git("config", "user.email", "release@example.invalid");
+            git("config", "commit.gpgsign", "false");
+            git("config", "core.hooksPath", "/dev/null");
+            mkdirSync(path.join(directory, "scripts/release"), { recursive: true });
+            writeFileSync(path.join(directory, "scripts/release/manifest.test.mjs"), "// fixture\n");
+            writeFileSync(path.join(directory, "business.js"), "export const version = 1;\n");
+            git("add", ".");
+            git("commit", "-qm", "baseline");
+            const baseline = git("rev-parse", "HEAD");
+            writeFileSync(path.join(directory, "business.js"), "export const version = 2;\n");
+            git("commit", "-qam", "business update");
+            const main = git("rev-parse", "HEAD");
+            git("update-ref", "refs/remotes/origin/main", main);
+            git("checkout", "-qb", "unmerged", baseline);
+            writeFileSync(path.join(directory, "business.js"), "export const version = 3;\n");
+            git("commit", "-qam", "unmerged business update");
+            const unmerged = git("rev-parse", "HEAD");
+            const script = parseDocument(workflow("docker-image.yml")).toJS().jobs.validate.steps[1].run;
+            const validate = (sourceSha, workflowSha = main) => spawnSync("bash", ["-c", script], {
+                cwd: directory,
+                encoding: "utf8",
+                timeout: 5000,
+                env: { ...process.env, SOURCE_SHA: sourceSha, WORKFLOW_SHA: workflowSha, GITHUB_OUTPUT: path.join(directory, "result") },
+            });
+            expect(validate(main).status).toBe(0);
+            expect(readFileSync(path.join(directory, "result"), "utf8")).toContain(`sha=${main}\n`);
+            expect(validate(baseline).status).toBe(0);
+            expect(validate(main.slice(0, 7)).status).not.toBe(0);
+            expect(validate("0".repeat(40)).status).not.toBe(0);
+            expect(validate(unmerged).status).not.toBe(0);
+            expect(validate(main, baseline).status).not.toBe(0);
+            expect(validate(unmerged, unmerged).status).not.toBe(0);
+
+            const quality = parseDocument(workflow("quality.yml")).toJS();
+            const sourceStep = quality.jobs.security.steps.find((step) => step.id === "source");
+            expect(sourceStep).toBeDefined();
+            const validateQuality = (sourceSha, eventSha = main) => spawnSync("bash", ["-c", sourceStep.run], {
+                cwd: directory,
+                encoding: "utf8",
+                timeout: 5000,
+                env: { ...process.env, SOURCE_SHA: sourceSha, EVENT_SHA: eventSha, GITHUB_OUTPUT: path.join(directory, "quality-result") },
+            });
+            git("checkout", "--detach", "-q", baseline);
+            expect(validateQuality(baseline).status).toBe(0);
+            expect(readFileSync(path.join(directory, "quality-result"), "utf8")).toContain(`sha=${baseline}\n`);
+            expect(validateQuality(main).status).not.toBe(0);
+            git("checkout", "--detach", "-q", main);
+            expect(validateQuality(main).status).toBe(0);
+            expect(validateQuality(main.slice(0, 7)).status).not.toBe(0);
+            expect(validateQuality("0".repeat(40)).status).not.toBe(0);
+            git("checkout", "--detach", "-q", unmerged);
+            expect(validateQuality(unmerged).status).not.toBe(0);
+            expect(validateQuality(unmerged, unmerged).status).toBe(0);
+        } finally {
+            rmSync(directory, { recursive: true, force: true });
+        }
+    });
+
     it("retires docs image publication without leaving a tag or package-write trigger", () => {
         const parsed = parseDocument(workflow("docs-docker-image.yml"));
         expect(parsed.errors).toEqual([]);
@@ -64,7 +129,18 @@ describe("release workflow contract", () => {
         const { on, jobs } = parsed.toJS();
         for (const event of ["workflow_dispatch", "workflow_call"]) {
             expect(on[event].inputs.full_checks).toMatchObject({ type: "boolean", default: false });
+            expect(on[event].inputs.source_sha).toMatchObject({ type: "string", required: true });
         }
+        expect(jobs.security.outputs.source_sha).toBe("${{ steps.source.outputs.sha }}");
+        for (const name of ["web", "docs"]) {
+            expect(jobs[name].needs).toBe("security");
+            const checkout = jobs[name].steps.find((step) => step.uses?.startsWith("actions/checkout@"));
+            expect(checkout.with.ref).toBe("${{ needs.security.outputs.source_sha }}");
+        }
+        const sourceIndex = jobs.security.steps.findIndex((step) => step.id === "source");
+        const scanIndex = jobs.security.steps.findIndex((step) => step.name === "Scan committed secrets");
+        expect(sourceIndex).toBeGreaterThan(-1);
+        expect(sourceIndex).toBeLessThan(scanIndex);
         expect(jobs.web.if).toBe("${{ inputs.full_checks == true }}");
         expect(jobs.docs.if).toBe(jobs.web.if);
         expect(jobs.security.if).toBeUndefined();
