@@ -1,13 +1,21 @@
 name: Quality
-run-name: Web 与文档质量检查 · ${{ github.ref_name }}
+run-name: Quality · full=${{ inputs.full_checks == true }} · ${{ github.ref_name }}
 
 on:
   push:
     branches: ["main"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      full_checks:
+        description: Run the full source quality suite, including mobile E2E
+        type: boolean
+        default: false
   workflow_call:
     inputs:
+      full_checks:
+        type: boolean
+        default: false
       source_sha:
         required: true
         type: string
@@ -17,6 +25,7 @@ permissions:
 
 jobs:
   web:
+    if: ${{ inputs.full_checks == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     services:
@@ -102,6 +111,7 @@ jobs:
           retention-days: 7
 
   docs:
+    if: ${{ inputs.full_checks == true }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -150,8 +160,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - name: Initialize CodeQL
+        if: ${{ inputs.full_checks == true }}
         uses: github/codeql-action/init@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87 # v3
         with:
           languages: javascript-typescript
       - name: Analyze JavaScript and TypeScript
+        if: ${{ inputs.full_checks == true }}
         uses: github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87 # v3

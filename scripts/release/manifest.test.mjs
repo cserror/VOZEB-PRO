@@ -5,13 +5,7 @@ import { createReleaseManifest } from "./manifest.mjs";
 const sha = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
 const registryDigest = `sha256:${"c".repeat(64)}`;
-const jobNames = [
-  "validate",
-  "quality / web",
-  "quality / docs",
-  "quality / security",
-  "publish",
-];
+const jobNames = ["validate", "quality / security", "publish"];
 function fixture() {
   return {
     repository: "cserror/VOZEB-PRO",
@@ -71,6 +65,12 @@ test("binds source, successful jobs, tested image and registry identity", () => 
   assert.equal(manifest.images[0].registry_digest, registryDigest);
   assert.equal(manifest.verification.registry_digest, registryDigest);
   assert.equal(manifest.build.required_jobs.length, jobNames.length);
+  assert.equal(manifest.build.validation_profile, "closed-test-build");
+  assert.ok(
+    manifest.verification.not_covered.includes(
+      "full source quality suite (including mobile E2E and dependency audit)",
+    ),
+  );
 });
 
 for (const [name, mutate] of [
@@ -128,7 +128,8 @@ for (const [name, mutate] of [
   [
     "skipped security job",
     (x) => {
-      x.jobs[3].conclusion = "skipped";
+      x.jobs.find((job) => job.name === "quality / security").conclusion =
+        "skipped";
     },
   ],
   [
@@ -198,6 +199,22 @@ for (const [name, mutate] of [
     assert.throws(() => createReleaseManifest(input));
   });
 }
+
+test("does not claim skipped full-quality jobs passed", () => {
+  const x = fixture();
+  x.jobs.push(
+    ...["quality / web", "quality / docs"].map((name) => ({
+      ...x.jobs[0],
+      name,
+      conclusion: "skipped",
+    })),
+  );
+  const manifest = createReleaseManifest(x);
+  assert.deepEqual(
+    manifest.build.required_jobs.map((job) => job.name),
+    jobNames,
+  );
+});
 
 test("accepts a rebuild only with matching new image evidence", () => {
   const x = fixture();

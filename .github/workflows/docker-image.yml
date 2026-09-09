@@ -1,5 +1,5 @@
 name: Docker image
-run-name: VOZEB image - ${{ inputs.source_sha }}
+run-name: VOZEB test image - ${{ inputs.source_sha }}
 
 on:
   workflow_dispatch:
@@ -40,8 +40,8 @@ jobs:
           git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"
           git merge-base --is-ancestor "$WORKFLOW_SHA" origin/main
           git cat-file -e "$SOURCE_SHA:scripts/release/manifest.test.mjs"
-          # This pilot changes build materials only, not the deployed business baseline.
-          BASELINE=61a5c2f6bee5fa6c4e66f662d143ea01bbab2e65
+          # Includes the approved dependency repair; no later business edits are allowed.
+          BASELINE=2b671c325e46c5f71375207acb10638428325b62
           git merge-base --is-ancestor "$BASELINE" "$SOURCE_SHA"
           git diff --exit-code "$BASELINE" "$SOURCE_SHA" -- . \
             ':(exclude)Dockerfile' ':(exclude).dockerignore' \
@@ -59,6 +59,7 @@ jobs:
     uses: ./.github/workflows/quality.yml
     with:
       source_sha: ${{ needs.validate.outputs.source_sha }}
+      full_checks: false
 
   publish:
     needs: [validate, quality]

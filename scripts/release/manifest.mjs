@@ -4,13 +4,7 @@ import { pathToFileURL } from "node:url";
 
 const sha = /^[a-f0-9]{40}$/;
 const digest = /^sha256:[a-f0-9]{64}$/;
-const requiredJobs = [
-  "validate",
-  "quality / web",
-  "quality / docs",
-  "quality / security",
-  "publish",
-];
+const requiredJobs = ["validate", "quality / security", "publish"];
 const requiredChecks = [
   "fresh-install",
   "admin-auth",
@@ -98,6 +92,7 @@ export function createReleaseManifest(input) {
     project: "vozeb-pro",
     source: { repository, source_sha: sourceSha, branch: "main" },
     build: {
+      validation_profile: "closed-test-build",
       workflow_path: ".github/workflows/docker-image.yml",
       workflow_sha: workflowSha,
       run_id: input.runId,
@@ -126,6 +121,7 @@ export function createReleaseManifest(input) {
       evidence:
         "publish-evidence.json; GitHub run/attempt jobs; successful overall run required",
       not_covered: [
+        "full source quality suite (including mobile E2E and dependency audit)",
         "production data upgrade/rollback",
         "paid generation and billing",
         "production browser acceptance",

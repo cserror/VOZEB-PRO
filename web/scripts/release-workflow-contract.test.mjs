@@ -20,6 +20,8 @@ describe("release workflow contract", () => {
         expect(jobs.validate.if).toContain("github.ref == 'refs/heads/main'");
         expect(jobs.validate.steps[1].run).toContain('git merge-base --is-ancestor "$SOURCE_SHA" "$WORKFLOW_SHA"');
         expect(jobs.quality.uses).toBe("./.github/workflows/quality.yml");
+        expect(jobs.quality.with.full_checks).toBe(false);
+        expect(jobs.validate.steps[1].run).toContain("BASELINE=2b671c325e46c5f71375207acb10638428325b62");
         expect(jobs.publish.needs).toEqual(["validate", "quality"]);
         expect(jobs.manifest.needs).toEqual(["validate", "quality", "publish"]);
         const steps = jobs.publish.steps;
@@ -55,16 +57,32 @@ describe("release workflow contract", () => {
         expect(document.jobs.retired.steps[0].run).toContain("exit 1");
     });
 
-    it("runs lint, tests, type-check, build and browser E2E in the main quality workflow", () => {
+    it("keeps full quality opt-in while secret scanning always blocks failures", () => {
         const source = workflow("quality.yml");
-
-        expect(parseDocument(source).errors).toEqual([]);
+        const parsed = parseDocument(source);
+        expect(parsed.errors).toEqual([]);
+        const { on, jobs } = parsed.toJS();
+        for (const event of ["workflow_dispatch", "workflow_call"]) {
+            expect(on[event].inputs.full_checks).toMatchObject({ type: "boolean", default: false });
+        }
+        expect(jobs.web.if).toBe("${{ inputs.full_checks == true }}");
+        expect(jobs.docs.if).toBe(jobs.web.if);
+        expect(jobs.security.if).toBeUndefined();
+        const secrets = jobs.security.steps.find((step) => step.name === "Scan committed secrets");
+        expect(secrets.if).toBeUndefined();
+        expect(secrets["continue-on-error"]).toBeUndefined();
+        for (const step of jobs.security.steps.filter((item) => item.uses?.startsWith("github/codeql-action/"))) {
+            expect(step.if).toBe(jobs.web.if);
+        }
         for (const command of ["pnpm run lint", "pnpm run typecheck", "pnpm test", "pnpm run build", "pnpm run e2e"]) expect(source).toContain(command);
         expect(source).toContain("pnpm exec playwright install --with-deps chromium");
         expect(source).toContain("version: 11.9.0");
         expect(source).toContain("gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7");
         expect(source).toContain("github/codeql-action/analyze@47be0dbd5113ab1b79fe2dd3f68bdf7e426cdc87");
         expect(source).not.toMatch(/uses:\s+[^\s]+@(v\d|main|master)\b/);
+        const dockerfile = readFileSync(path.join(repoRoot, "Dockerfile"), "utf8");
+        expect(dockerfile).toContain("pnpm install --frozen-lockfile");
+        expect(dockerfile).toContain("pnpm run typecheck && NEXT_SKIP_BUILD_TYPECHECK=1 pnpm run build");
     });
 
     it("serializes shared PostgreSQL integration tests in reusable quality", () => {
