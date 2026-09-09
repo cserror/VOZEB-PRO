@@ -4,7 +4,7 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  loopbackRequest,
+  containerRequest,
   assertRejectedInstall,
   assertEmptyWorkerBatch,
   cleanupResources,
@@ -132,18 +132,13 @@ try {
       "2",
       "--network-alias",
       "app",
-      "-p",
-      "127.0.0.1::3000",
       ...Object.keys(variables).flatMap((key) => ["-e", key]),
       image,
     ],
     variables,
   );
-  const port = JSON.parse(docker(["inspect", app]))[0].NetworkSettings.Ports[
-    "3000/tcp"
-  ][0].HostPort;
-  const base = `http://127.0.0.1:${port}`;
-  const request = (path, options = {}) => loopbackRequest(base, path, options);
+  const request = (path, options = {}) =>
+    containerRequest(docker, app, path, options);
   const post = (path, body) =>
     request(path, {
       method: "POST",

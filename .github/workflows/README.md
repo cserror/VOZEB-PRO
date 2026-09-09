@@ -16,6 +16,8 @@
 
 成品测试使用独立临时 PostgreSQL、随机测试凭据及禁止外网的 Docker 网络，覆盖初始化、管理员鉴权、静态资源、Sharp、FFmpeg、Worker 心跳和应用重启后的数据保持。它不替代生产旧数据迁移、付费模型/计费和完整生产浏览器验收。测试只清理该次创建且标签匹配的资源。
 
+HTTP 检查通过 `docker exec` 在应用容器内访问 `127.0.0.1:3000`，不发布或查询宿主机端口；保持 `--internal` 网络、禁止跳转及 10 秒请求超时。请求参数通过临时 exec 环境变量传入，不拼进命令；响应保留独立 Cookie 和二进制内容。
+
 报告保留 7 天，仅上传小型 JSON；运维必须下载并长期归档实际部署版本证据。`release-manifest.json` 字段语义由运维交接 Playbook 拥有，项目生成器不替代运维独立核验 GitHub run/attempt、整体 conclusion、镜像和配套材料。
 
 GitHub 标准 runner、权限/包可见性、费用预算及最多两次试构建范围须在首次运行前确认。当前工作流没有签名/SBOM 发布链路，不冒充具备消费者签名验签；来源核验依赖明确仓库、工作流 SHA、run 和 registry digest。
@@ -23,3 +25,5 @@ GitHub 标准 runner、权限/包可见性、费用预算及最多两次试构�
 运维部署时，在现有基础 Compose 和生产覆盖之后最后追加 `deploy/docker-compose.image.yml`，清除原 build 字段，仅替换应用镜像。先在服务器实际 Compose 版本上验证合并结果，保留原 env、卷、端口、网络和资源限制；使用 `up --no-build`，不得执行 `down -v` 或全局清理。文件不会自动应用到生产。
 
 本地针对性检查：`node --test scripts/release/*.test.mjs`，以及 Web 的 `scripts/release-workflow-contract.test.mjs`。完整镜像测试在获准云构建中运行；缺少成功证据时不得正式交接为通过。
+
+本地端口问题回归：指定已缓存的 Node 镜像 `VOZEB_SMOKE_TEST_IMAGE=<image-id>` 和本机 Unix-socket context `VOZEB_SMOKE_TEST_CONTEXT=<context>`，执行 `node --test scripts/release/smoke-container.test.mjs`。仅创建带标签、无宿主机端口、无数据挂载的临时 HTTP 容器与隔离网络，结束自动清理；不指定镜像时跳过，不下载镜像，也不代表真实 VOZEB 成品验收。

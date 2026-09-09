@@ -17,6 +17,41 @@ export function loopbackRequest(base, path, options = {}) {
   });
 }
 
+export async function containerRequest(docker, container, path, options = {}) {
+  // Reuse the restricted HTTP client inside the app's network namespace.
+  const script = `
+    import assert from "node:assert/strict";
+    const request = ${loopbackRequest.toString()};
+    const { path, options } = JSON.parse(process.env.VOZEB_RELEASE_REQUEST);
+    const response = await request("http://127.0.0.1:3000", path, options);
+    const headers = [...response.headers].filter(([name]) => name !== "set-cookie");
+    for (const cookie of response.headers.getSetCookie()) headers.push(["set-cookie", cookie]);
+    const body = response.body === null ? null : Buffer.from(await response.arrayBuffer()).toString("base64");
+    console.log(JSON.stringify({ status: response.status, headers, body }));
+  `;
+  const raw = await docker(
+    [
+      "exec",
+      "-e",
+      "VOZEB_RELEASE_REQUEST",
+      container,
+      "node",
+      "--input-type=module",
+      "-e",
+      script,
+    ],
+    { VOZEB_RELEASE_REQUEST: JSON.stringify({ path, options }) },
+  );
+  const response = JSON.parse(raw);
+  return new Response(
+    response.body === null ? null : Buffer.from(response.body, "base64"),
+    {
+      status: response.status,
+      headers: response.headers,
+    },
+  );
+}
+
 export function assertRejectedInstall(status, schemaBefore, schemaAfter) {
   assert.equal(status, 403);
   assert.equal(schemaBefore, false);

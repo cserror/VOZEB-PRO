@@ -3,10 +3,78 @@ import { createServer } from "node:http";
 import { test } from "node:test";
 import {
   loopbackRequest,
+  containerRequest,
   assertRejectedInstall,
   assertEmptyWorkerBatch,
   cleanupResources,
 } from "./smoke-safety.mjs";
+
+test("container requests preserve binary bodies and separate cookies without publishing a port", async () => {
+  const calls = [];
+  const bytes = Buffer.from([0, 127, 128, 255]);
+  const docker = (args, variables) => {
+    calls.push({ args, variables });
+    return JSON.stringify({
+      status: 200,
+      headers: [
+        ["set-cookie", "session=fixture; HttpOnly"],
+        ["set-cookie", "csrf=fixture"],
+        ["content-type", "application/octet-stream"],
+      ],
+      body: bytes.toString("base64"),
+    });
+  };
+  const options = {
+    method: "POST",
+    headers: { authorization: "Bearer fixture" },
+    body: JSON.stringify({ test: true }),
+  };
+  const response = await containerRequest(
+    docker,
+    "fixture-container",
+    "/check",
+    options,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.headers.getSetCookie(), [
+    "session=fixture; HttpOnly",
+    "csrf=fixture",
+  ]);
+  assert.deepEqual(Buffer.from(await response.arrayBuffer()), bytes);
+  assert.deepEqual(calls[0].args.slice(0, 6), [
+    "exec",
+    "-e",
+    "VOZEB_RELEASE_REQUEST",
+    "fixture-container",
+    "node",
+    "--input-type=module",
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].variables.VOZEB_RELEASE_REQUEST), {
+    path: "/check",
+    options,
+  });
+  assert.ok(!calls[0].args.join(" ").includes("Bearer fixture"));
+});
+
+test("container requests preserve empty responses and propagate transport failures", async () => {
+  const response = await containerRequest(
+    () => JSON.stringify({ status: 204, headers: [], body: null }),
+    "fixture",
+    "/empty",
+  );
+  assert.equal(response.status, 204);
+  assert.equal(response.body, null);
+  await assert.rejects(
+    containerRequest(
+      () => {
+        throw Error("transport failed");
+      },
+      "fixture",
+      "/",
+    ),
+    /transport failed/,
+  );
+});
 
 test("a redirect cannot leave the explicit test request path", async (t) => {
   let redirectedRequests = 0;
